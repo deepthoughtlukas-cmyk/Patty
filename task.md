@@ -1,0 +1,25 @@
+# Target Portfolio Webapp Tasks
+
+- [x] 1. Initialize Vite + React setup
+  - [x] Use `npx create-vite@latest . --template react-ts`
+  - [x] Clear default boilerplate
+- [x] 2. Setup dependencies and base styles
+  - [x] Install `papaparse` for CSV handling
+  - [x] Install `recharts` for visualizations
+  - [x] Install `lucide-react` for icons
+  - [x] Create `index.css` with a stunning, modern dark-mode aesthetic (Vanilla CSS, no Tailwind)
+- [x] 3. Build CSV Parsing & Data Models
+  - [x] Define TypeScript interfaces for imported data
+  - [x] Implement `papaparse` logic that handles German number formatting (commas for decimals)
+- [x] 4. Implement Categorization Logic
+  - [x] Auto-map "Edelmetalle & Mineralien" to Performance Gold / Commodities
+  - [x] Auto-map Crypto/Blockchain stocks to Bitcoin
+  - [x] Everything else as Stocks by default
+  - [x] Build mapping UI so users can override categories manually per asset
+- [x] 5. Build Dashboard View
+  - [x] Create Donut/Pie charts for Current vs Target Allocation
+  - [x] Build a table showing holdings per category
+  - [x] Show rebalancing recommendations (Buy/Sell amounts)
+- [x] 6. Final Polish
+  - [x] Add micro-animations and smooth transitions
+  - [x] Ensure responsive layout
