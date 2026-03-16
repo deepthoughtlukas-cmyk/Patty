@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { BarChart3, Upload } from 'lucide-react'
+import { Beef, Upload } from 'lucide-react'
 import { parseCSV, type Investment, type AssetCategory } from './utils/parser'
 import { categorizeWithRules } from './utils/categorizer'
 import { saveRule } from './utils/userRules'
@@ -64,11 +64,11 @@ export default function App() {
       <header className="header">
         <div className="header-title">
           <div className="header-icon">
-            <BarChart3 size={22} color="#0d0f14" />
+            <Beef size={22} color="#0d0f14" />
           </div>
           <div>
-            <h1>Target Portfolio Allocator</h1>
-            <p>Incrementum New 60/40 — Stocks · Bonds · Gold · Commodities · Bitcoin</p>
+            <h1>Patty</h1>
+            <p>Portfolio Allocation Tracker Tool for You</p>
           </div>
         </div>
       </header>
