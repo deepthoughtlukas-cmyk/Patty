@@ -6,18 +6,18 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, XCircle, Download, Upload, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, XCircle, Download, Upload, Plus, Coins } from 'lucide-react'
 import type { Investment, AssetCategory } from '../utils/parser'
 import {
   computeAllocation,
   computeSubAllocation,
   ALL_CATEGORIES,
   CATEGORY_COLORS,
-  SUBCATEGORY_COLORS,
+  getSubcategoryColor,
   DEFAULT_SUBCATEGORIES,
 } from '../utils/categorizer'
 import type { SubWeight } from '../utils/categorizer'
-import { loadRules, deleteRule, clearRules, exportRulesToJSON, importRulesFromFile, type UserRule } from '../utils/userRules'
+import { loadRules, deleteRule, clearRules, exportRulesToJSON, importRulesFromFile, investmentKey, validIsin, type UserRule } from '../utils/userRules'
 import {
   loadProfiles,
   saveProfile,
@@ -150,7 +150,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   }
 
   // Check if an investment has a user-override
-  const ruleKeys = new Set(rules.map((r) => r.isin || r.name))
+  const ruleKeys = new Set(rules.map((r) => validIsin(r.isin) || r.name))
 
   // Profile handlers
   const switchProfile = (id: string) => {
@@ -263,6 +263,18 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const totalGainPct = totalCost > 0 ? totalGain / totalCost : 0
 
   const allocation = computeAllocation(activeInvestments, activeWeights)
+
+  // Extract gold price per gram from ETF and calculate 1 oz Philharmoniker price
+  // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
+  const TROY_OZ_IN_GRAMS = 31.1035
+  const DEALER_PREMIUM = 1.03
+  const goldEntry = investments.find((inv) => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold'))
+  const goldGramPrice = goldEntry?.currentPrice || 0
+  const goldOzPrice = goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
+
+  // Silver spot price per oz (manually maintained — no silver ETC in portfolio data)
+  // Update this value periodically to reflect current market price
+  const SILVER_OZ_PRICE_EUR = 30
 
   const actualChartData = allocation.map((a) => ({
     name: a.category,
@@ -511,7 +523,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                       const isDefault = (DEFAULT_SUBCATEGORIES[cat] || []).includes(sub)
                       return (
                         <div className="weight-row sub-weight-row" key={sub}>
-                          <span className="weight-dot" style={{ background: SUBCATEGORY_COLORS[sub] || '#6b7280' }} />
+                          <span className="weight-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
                           <span className="weight-name">{sub}</span>
                           <button 
                             className="slider-btn" 
@@ -523,7 +535,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                             max={100}
                             value={val}
                             className="weight-slider"
-                            style={{ accentColor: SUBCATEGORY_COLORS[sub] || '#6b7280' }}
+                            style={{ accentColor: getSubcategoryColor(sub, cat) }}
                             onChange={(e) => updateDraftSubWeight(cat, sub, parseInt(e.target.value) / 100)}
                           />
                           <button 
@@ -606,10 +618,10 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                     {a.category}
                   </span>
                   <span>
-                    <span style={{ color: a.deviation > 0.005 ? 'var(--green)' : a.deviation < -0.005 ? 'var(--red)' : 'var(--text-secondary)' }}>
+                    <span style={{ color: a.deviation > 0.005 ? 'var(--green)' : a.deviation < -0.005 ? 'var(--red)' : 'var(--text-primary)' }}>
                       {fmtPct(a.percentage)}
                     </span>
-                    <span style={{ color: 'var(--text-muted)' }}> / {fmtPct(a.targetPercentage)}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}> / {fmtPct(a.targetPercentage)}</span>
                   </span>
                 </div>
                 <div className="alloc-bar-track">
@@ -654,7 +666,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-title">Rebalancing Recommendations</div>
         <div className="rebalance-list">
-          {allocation.map((a) => {
+          {[...allocation].sort((a, b) => b.deviation - a.deviation).map((a) => {
             const targetValue = totalValue * a.targetPercentage
             const diff = targetValue - a.value
             const absDiff = Math.abs(diff)
@@ -676,7 +688,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                     ? <ChevronDown size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
                     : <ChevronRight size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
                   )}
-                  <span className="rebalance-item-name">{a.category}</span>
+                  <span className="rebalance-item-name" title={a.category === 'Safe-Haven Gold' && goldOzPrice > 0 ? `1 oz Gold: ${fmtEur(goldOzPrice)}` : undefined}>{a.category}</span>
                   <span className="rebalance-deviation">
                     {a.deviation >= 0 ? '+' : ''}{(a.deviation * 100).toFixed(1)} %
                   </span>
@@ -693,7 +705,13 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                       <TrendingDown size={10} style={{ marginRight: 4 }} />Sell {fmtEur(absDiff)}
                     </span>
                   )}
-                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }} title="Actual % / Target % of total portfolio">
+                  {/* Philharmoniker coin indicator for Safe-Haven Gold */}
+                  {a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0 && absDiff >= goldOzPrice && (
+                    <span title={`Buy recommendation ≥ 1 oz Philharmoniker (${fmtEur(goldOzPrice)})`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                      <Coins size={16} color="var(--gold)" />
+                    </span>
+                  )}
+                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }} title="Actual % / Target % of total portfolio">
                     {(a.percentage * 100).toFixed(1)}% / {(a.targetPercentage * 100).toFixed(1)}% Portfolio
                   </span>
                 </div>
@@ -701,7 +719,14 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                 {/* Subcategory rebalancing */}
                 {hasMultipleSubs && rebalSubVisible && (
                   <div className="sub-rebalance-list">
-                    {subAlloc.filter((sa) => sa.targetPercentage > 0).map((sa) => {
+                    {[...subAlloc]
+                      .filter((sa) => sa.targetPercentage > 0)
+                      .sort((x, y) => {
+                        const xDev = (a.percentage * x.percentage) - (a.targetPercentage * x.targetPercentage)
+                        const yDev = (a.percentage * y.percentage) - (a.targetPercentage * y.targetPercentage)
+                        return yDev - xDev
+                      })
+                      .map((sa) => {
                       // Absolute target for this subcategory = category target * sub-target within category
                       const subAbsTarget = a.targetPercentage * sa.targetPercentage
                       const subActualAbs = a.percentage * sa.percentage
@@ -714,7 +739,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                       return (
                         <div className="rebalance-item sub-rebalance-item" key={sa.subcategory}>
                           <span className="sub-alloc-dot" style={{ background: sa.color }} />
-                          <span className="rebalance-item-name sub-rebalance-name">{sa.subcategory}</span>
+                          <span className="rebalance-item-name sub-rebalance-name" title={sa.subcategory === 'Silber' && SILVER_OZ_PRICE_EUR > 0 ? `1 oz Silber: ~${fmtEur(SILVER_OZ_PRICE_EUR)}` : undefined}>{sa.subcategory}</span>
                           <span className="rebalance-deviation">
                             {subDev >= 0 ? '+' : ''}{(subDev * 100).toFixed(1)} %
                           </span>
@@ -731,7 +756,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                               <TrendingDown size={9} style={{ marginRight: 3 }} />Sell {fmtEur(subAbsDiff)}
                             </span>
                           )}
-                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }} title="Actual % / Target % of total portfolio">
+                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }} title="Actual % / Target % of total portfolio">
                             {(subActualAbs * 100).toFixed(1)}% / {(subAbsTarget * 100).toFixed(1)}% Portfolio
                           </span>
                         </div>
@@ -863,7 +888,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                           className="subcategory-header"
                           onClick={() => toggleCollapse(subCollapseKey)}
                         >
-                          <span className="sub-dot" style={{ background: SUBCATEGORY_COLORS[sub] || '#6b7280' }} />
+                          <span className="sub-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
                           <span className="subcategory-header-name">{sub}</span>
                           <span className="subcategory-header-count">{subItems.length}</span>
                           <span className="subcategory-header-value">{fmtEur(subValue)}</span>
@@ -904,7 +929,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                           className="cat-select sub-select"
                                           value={inv.subcategory}
                                           onChange={(e) => {
-                                            onCategoryChange(inv.isin || inv.name, inv.category, e.target.value)
+                                            onCategoryChange(investmentKey(inv), inv.category, e.target.value)
                                             setTimeout(refreshRules, 50)
                                           }}
                                         >
@@ -919,7 +944,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                             className="cat-select"
                                             value={inv.category}
                                             onChange={(e) => {
-                                              onCategoryChange(inv.isin || inv.name, e.target.value as AssetCategory)
+                                              onCategoryChange(investmentKey(inv), e.target.value as AssetCategory)
                                               setTimeout(refreshRules, 50)
                                             }}
                                           >
@@ -927,7 +952,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                               <option key={c} value={c}>{c}</option>
                                             ))}
                                           </select>
-                                          {ruleKeys.has(inv.isin || inv.name) && (
+                                          {ruleKeys.has(investmentKey(inv)) && (
                                             <span className="rule-badge" title="User-defined category">
                                               <UserCheck size={12} />
                                             </span>

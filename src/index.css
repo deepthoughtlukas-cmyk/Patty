@@ -938,16 +938,17 @@ body {
 .sub-alloc-pct {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
+  color: var(--text-primary);
   min-width: 30px;
   text-align: right;
+  font-weight: 500;
 }
 
 .sub-alloc-target {
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  opacity: 0.6;
+  color: var(--text-secondary);
+  opacity: 0.9;
   min-width: 34px;
   text-align: right;
 }

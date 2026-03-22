@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Beef, Upload } from 'lucide-react'
 import { parseCSV, type Investment, type AssetCategory } from './utils/parser'
 import { categorizeWithRules } from './utils/categorizer'
-import { saveRule } from './utils/userRules'
+import { saveRule, investmentKey } from './utils/userRules'
 import Dashboard from './components/Dashboard'
 
 export default function App() {
@@ -44,14 +44,14 @@ export default function App() {
 
   const handleCategoryChange = (key: string, category: AssetCategory, subcategory?: string) => {
     // Find the investment to get its name + ISIN for the rule
-    const target = investments?.find((inv) => inv.isin === key || inv.name === key)
+    const target = investments?.find((inv) => investmentKey(inv) === key)
     if (target) {
       saveRule({ isin: target.isin, name: target.name, category, subcategory })
     }
     setInvestments((prev) =>
       prev
         ? prev.map((inv) =>
-            inv.isin === key || inv.name === key
+            investmentKey(inv) === key
               ? { ...inv, category, ...(subcategory ? { subcategory } : {}) }
               : inv
           )

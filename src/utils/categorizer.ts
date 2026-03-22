@@ -38,12 +38,35 @@ export const DEFAULT_SUBCATEGORIES: Record<AssetCategory, string[]> = {
   'Bitcoin': ['General'],
 }
 
-// Subcategory color shades
+// Subcategory color shades — derived from parent category for visual cohesion
 export const SUBCATEGORY_COLORS: Record<string, string> = {
-  'AI': '#93c5fd', 'Defence': '#3b82f6', 'Real Estate': '#2563eb',
-  'Metals': '#6ee7b7', 'Energy': '#10b981', 'Agribusiness': '#059669', 'Livestock': '#047857',
-  'Goldminen': '#fbbf24', 'Silber': '#94a3b8', 'Silberminen': '#64748b',
-  'General': '#6b7280',
+  // Stocks (parent: #60a5fa blue) — light to deep blue
+  'AI': '#93c5fd',
+  'Defence': '#3b82f6',
+  'Real Estate': '#2563eb',
+
+  // Performance Gold (parent: #f59e0b amber) — warm gold/amber family
+  'Goldminen': '#fbbf24',
+  'Silber': '#d4a853',
+  'Silberminen': '#b8860b',
+
+  // Commodities (parent: #34d399 green) — emerald/teal family
+  'Metals': '#6ee7b7',
+  'Energy': '#10b981',
+  'Agribusiness': '#059669',
+  'Livestock': '#047857',
+
+  // Fallback General — neutral, slightly warm
+  'General': '#8b90a0',
+}
+
+/** Get a cohesive subcategory color, falling back to a muted tint of the parent category */
+export function getSubcategoryColor(sub: string, parentCategory?: AssetCategory): string {
+  if (SUBCATEGORY_COLORS[sub]) return SUBCATEGORY_COLORS[sub]
+  if (!parentCategory) return '#8b90a0'
+  // Return a softened version of the parent color for unknown subcategories
+  const base = CATEGORY_COLORS[parentCategory]
+  return base + 'bb' // slightly transparent tint of parent
 }
 
 const PRECIOUS_METALS_SECTOR = 'Edelmetalle & Mineralien'
@@ -221,7 +244,7 @@ export function computeSubAllocation(
       percentage,
       targetPercentage,
       deviation: percentage - targetPercentage,
-      color: SUBCATEGORY_COLORS[sub] || '#6b7280',
+      color: getSubcategoryColor(sub, category),
     }
   })
 }

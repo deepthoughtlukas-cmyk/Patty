@@ -21,11 +21,24 @@ export function loadRules(): UserRule[] {
   }
 }
 
-/** Save (upsert) a single rule — keyed by ISIN, falls back to name */
+/** Returns the ISIN if it's a real one, or empty string for N/A / missing */
+export function validIsin(isin: string | undefined | null): string {
+  if (!isin) return ''
+  const trimmed = isin.trim()
+  if (trimmed === '' || trimmed.toUpperCase() === 'N/A') return ''
+  return trimmed
+}
+
+/** Derive a unique key for an investment: real ISIN if available, otherwise name */
+export function investmentKey(inv: { isin: string; name: string }): string {
+  return validIsin(inv.isin) || inv.name
+}
+
+/** Save (upsert) a single rule — keyed by valid ISIN, falls back to name */
 export function saveRule(rule: UserRule): void {
   const rules = loadRules()
-  const key = rule.isin || rule.name
-  const idx = rules.findIndex((r) => (r.isin || r.name) === key)
+  const key = validIsin(rule.isin) || rule.name
+  const idx = rules.findIndex((r) => (validIsin(r.isin) || r.name) === key)
   if (idx >= 0) {
     rules[idx] = rule
   } else {
@@ -34,9 +47,9 @@ export function saveRule(rule: UserRule): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
 }
 
-/** Delete a rule by its key (ISIN or name) */
+/** Delete a rule by its key (valid ISIN or name) */
 export function deleteRule(key: string): void {
-  const rules = loadRules().filter((r) => (r.isin || r.name) !== key)
+  const rules = loadRules().filter((r) => (validIsin(r.isin) || r.name) !== key)
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
 }
 
@@ -45,7 +58,7 @@ export function clearRules(): void {
   localStorage.removeItem(STORAGE_KEY)
 }
 
-/** Apply saved user rules to investments (ISIN match, fallback name match) */
+/** Apply saved user rules to investments (valid ISIN match, fallback name match) */
 export function applyRules(investments: Investment[]): Investment[] {
   const rules = loadRules()
   if (rules.length === 0) return investments
@@ -53,12 +66,14 @@ export function applyRules(investments: Investment[]): Investment[] {
   const byIsin = new Map<string, UserRule>()
   const byName = new Map<string, UserRule>()
   for (const r of rules) {
-    if (r.isin) byIsin.set(r.isin, r)
+    const vi = validIsin(r.isin)
+    if (vi) byIsin.set(vi, r)
     else byName.set(r.name, r)
   }
 
   return investments.map((inv) => {
-    const rule = byIsin.get(inv.isin) ?? byName.get(inv.name)
+    const vi = validIsin(inv.isin)
+    const rule = (vi ? byIsin.get(vi) : undefined) ?? byName.get(inv.name)
     if (!rule) return inv
     const updated = { ...inv, category: rule.category }
     if (rule.subcategory) updated.subcategory = rule.subcategory
@@ -69,8 +84,8 @@ export function applyRules(investments: Investment[]): Investment[] {
 /** Check whether a specific investment has a user-override rule */
 export function hasUserRule(inv: Investment): boolean {
   const rules = loadRules()
-  const key = inv.isin || inv.name
-  return rules.some((r) => (r.isin || r.name) === key)
+  const key = investmentKey(inv)
+  return rules.some((r) => (validIsin(r.isin) || r.name) === key)
 }
 
 /** Export all rules as a JSON file download */
