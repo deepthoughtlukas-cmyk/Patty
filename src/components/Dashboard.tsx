@@ -693,6 +693,9 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                       <TrendingDown size={10} style={{ marginRight: 4 }} />Sell {fmtEur(absDiff)}
                     </span>
                   )}
+                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }} title="Actual % / Target % of total portfolio">
+                    {(a.percentage * 100).toFixed(1)}% / {(a.targetPercentage * 100).toFixed(1)}% Portfolio
+                  </span>
                 </div>
 
                 {/* Subcategory rebalancing */}
@@ -728,6 +731,9 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                               <TrendingDown size={9} style={{ marginRight: 3 }} />Sell {fmtEur(subAbsDiff)}
                             </span>
                           )}
+                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }} title="Actual % / Target % of total portfolio">
+                            {(subActualAbs * 100).toFixed(1)}% / {(subAbsTarget * 100).toFixed(1)}% Portfolio
+                          </span>
                         </div>
                       )
                     })}

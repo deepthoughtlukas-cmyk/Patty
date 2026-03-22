@@ -55,7 +55,7 @@ export function parseCSV(text: string): Investment[] {
     skipEmptyLines: true,
   })
 
-  return result.data
+  const rawInvestments = result.data
     .filter((row) => row.Name && row.Name.trim() !== '')
     .map((row) => ({
       name: row.Name.trim(),
@@ -70,7 +70,36 @@ export function parseCSV(text: string): Investment[] {
       exchangeRate: parseGermanNumber(row.Wechselkurs) || 1,
       region: row.Region?.trim() ?? '',
       sector: row.Sektor?.trim() ?? '',
-      category: 'Stocks' as AssetCategory, // placeholder; overwritten by categorizer
-      subcategory: 'General',              // placeholder; overwritten by categorizer
+      category: 'Stocks' as AssetCategory,
+      subcategory: 'General',
     }))
+
+  // Aggregate identical assets
+  const aggregated = new Map<string, Investment>()
+  
+  for (const inv of rawInvestments) {
+    // Treat N/A as missing ISIN to avoid grouping completely different assets that share N/A ISIN
+    const validIsin = inv.isin && inv.isin.toUpperCase() !== 'N/A' ? inv.isin : null;
+    const key = validIsin ? `${validIsin}` : `${inv.name.toLowerCase()}`;
+
+    if (aggregated.has(key)) {
+      const existing = aggregated.get(key)!
+      const totalQuantity = existing.quantity + inv.quantity
+      const totalCost = (existing.purchasePrice * existing.quantity) + (inv.purchasePrice * inv.quantity)
+      
+      aggregated.set(key, {
+        ...existing,
+        quantity: totalQuantity,
+        currentValue: existing.currentValue + inv.currentValue,
+        // Calculate newly weighted average purchase price
+        purchasePrice: totalQuantity > 0 ? totalCost / totalQuantity : existing.purchasePrice,
+        // Prefer explicit ISIN over N/A if it appears in later rows
+        isin: existing.isin.toUpperCase() === 'N/A' || !existing.isin ? inv.isin : existing.isin,
+      })
+    } else {
+      aggregated.set(key, { ...inv })
+    }
+  }
+
+  return Array.from(aggregated.values())
 }
