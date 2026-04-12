@@ -1,6 +1,6 @@
 import type { AssetCategory, Investment } from './parser'
 
-const STORAGE_KEY = 'stockpicker-user-rules'
+const STORAGE_KEY = 'patty-user-rules'
 
 export interface UserRule {
   isin: string
@@ -95,7 +95,7 @@ export function exportRulesToJSON(): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `stockpicker-rules-${new Date().toISOString().slice(0, 10)}.json`
+  a.download = `patty-rules-${new Date().toISOString().slice(0, 10)}.json`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

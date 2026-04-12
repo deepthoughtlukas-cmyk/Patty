@@ -7,6 +7,7 @@ export type AssetCategory =
   | 'Performance Gold'
   | 'Commodities'
   | 'Bitcoin'
+  | 'Altcoins'
 
 export interface RawRow {
   Name: string

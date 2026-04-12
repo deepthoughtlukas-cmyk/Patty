@@ -32,6 +32,7 @@
   --cat-gold-perf: #f59e0b;
   --cat-commodities: #34d399;
   --cat-bitcoin: #fb923c;
+  --cat-altcoins: #c084fc;
 
   --radius-sm: 6px;
   --radius-md: 12px;
@@ -593,6 +594,19 @@ body {
 .btn-icon-sm:hover {
   color: var(--red);
   background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-delete-asset {
+  opacity: 0.25;
+  transition: opacity var(--transition), color var(--transition), background var(--transition);
+}
+
+.holdings-table tr:hover .btn-delete-asset {
+  opacity: 0.7;
+}
+
+.btn-delete-asset:hover {
+  opacity: 1 !important;
 }
 
 .btn-danger-ghost {

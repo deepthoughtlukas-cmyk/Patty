@@ -1,8 +1,8 @@
 import type { AssetCategory } from './parser'
 import type { SubWeight } from './categorizer'
 
-const STORAGE_KEY = 'stockpicker-target-profiles'
-const ACTIVE_KEY = 'stockpicker-active-profile'
+const STORAGE_KEY = 'patty-target-profiles'
+const ACTIVE_KEY = 'patty-active-profile'
 
 export type TargetWeights = Record<AssetCategory, number>
 
@@ -24,6 +24,7 @@ export const DEFAULT_PROFILE: TargetProfile = {
     'Performance Gold': 0.10,
     'Commodities': 0.10,
     'Bitcoin': 0.05,
+    'Altcoins': 0.00,
   },
   subWeights: {
     'Stocks': [
@@ -55,6 +56,14 @@ export function loadProfiles(): TargetProfile[] {
     const parsed: TargetProfile[] = JSON.parse(raw)
     if (!Array.isArray(parsed)) return [DEFAULT_PROFILE]
     const hasDefault = parsed.some((p) => p.id === DEFAULT_PROFILE.id)
+    
+    // Backwards compatibility for newly added categories
+    parsed.forEach((p) => {
+      if (p.weights && typeof p.weights['Altcoins'] === 'undefined') {
+        p.weights['Altcoins'] = 0;
+      }
+    })
+
     return hasDefault ? parsed : [DEFAULT_PROFILE, ...parsed]
   } catch {
     return [DEFAULT_PROFILE]

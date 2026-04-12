@@ -8,6 +8,7 @@ export const TARGET_ALLOCATION: Record<AssetCategory, number> = {
   'Performance Gold': 0.10,
   'Commodities': 0.10,
   'Bitcoin': 0.05,
+  'Altcoins': 0.00,
 }
 
 export const CATEGORY_COLORS: Record<AssetCategory, string> = {
@@ -17,6 +18,7 @@ export const CATEGORY_COLORS: Record<AssetCategory, string> = {
   'Performance Gold': '#f59e0b',
   'Commodities': '#34d399',
   'Bitcoin': '#fb923c',
+  'Altcoins': '#c084fc',
 }
 
 export const ALL_CATEGORIES: AssetCategory[] = [
@@ -26,6 +28,7 @@ export const ALL_CATEGORIES: AssetCategory[] = [
   'Performance Gold',
   'Commodities',
   'Bitcoin',
+  'Altcoins',
 ]
 
 // Default subcategories per main category
@@ -36,6 +39,7 @@ export const DEFAULT_SUBCATEGORIES: Record<AssetCategory, string[]> = {
   'Performance Gold': ['Goldminen', 'Silber', 'Silberminen', 'General'],
   'Commodities': ['Metals', 'Energy', 'Agribusiness', 'Livestock', 'General'],
   'Bitcoin': ['General'],
+  'Altcoins': ['Ethereum', 'Solana', 'General'],
 }
 
 // Subcategory color shades — derived from parent category for visual cohesion
@@ -58,6 +62,10 @@ export const SUBCATEGORY_COLORS: Record<string, string> = {
 
   // Fallback General — neutral, slightly warm
   'General': '#8b90a0',
+
+  // Altcoins
+  'Ethereum': '#a78bfa',
+  'Solana': '#818cf8',
 }
 
 /** Get a cohesive subcategory color, falling back to a muted tint of the parent category */
@@ -72,8 +80,11 @@ export function getSubcategoryColor(sub: string, parentCategory?: AssetCategory)
 const PRECIOUS_METALS_SECTOR = 'Edelmetalle & Mineralien'
 
 // Keywords for main categories
-const BITCOIN_NAME_KEYWORDS = ['bitcoin', 'btc', 'crypto', 'blockchain', 'strategy', 'microstrategy', 'mara', 'riot', 'hut 8', 'cipher mining', 'defi', 'dwave']
-const BITCOIN_SECTOR_KEYWORDS = ['blockchain', 'kryptowähr']
+const BITCOIN_NAME_KEYWORDS = ['bitcoin', 'btc', 'strategy', 'microstrategy', 'mara', 'riot', 'hut 8', 'cipher mining', 'dwave']
+const BITCOIN_SECTOR_KEYWORDS = ['kryptowähr']
+
+const ALTCOIN_NAME_KEYWORDS = ['ethereum', 'eth', 'solana', 'sol ', 'cardano', 'polkadot', 'chainlink', 'altcoin', 'crypto', 'blockchain']
+const ALTCOIN_SECTOR_KEYWORDS = ['blockchain']
 
 const BOND_NAME_KEYWORDS = ['anleihe', 'bond', 'treasury', 'bund']
 const BOND_TYPE_KEYWORDS = ['anleihe', 'bond']
@@ -116,6 +127,9 @@ export function autoCategory(inv: Investment): AssetCategory {
   if (containsAny(name, BITCOIN_NAME_KEYWORDS) || containsAny(sector, BITCOIN_SECTOR_KEYWORDS)) {
     return 'Bitcoin'
   }
+  if (containsAny(name, ALTCOIN_NAME_KEYWORDS) || containsAny(sector, ALTCOIN_SECTOR_KEYWORDS)) {
+    return 'Altcoins'
+  }
   if (containsAny(name, SAFE_GOLD_NAME_KEYWORDS)) {
     return 'Safe-Haven Gold'
   }
@@ -147,6 +161,11 @@ export function autoSubcategory(inv: Investment): string {
     if (containsAny(combined, SUB_STOCK_DEFENCE)) return 'Defence'
     if (containsAny(combined, SUB_STOCK_AI)) return 'AI'
     if (containsAny(combined, SUB_STOCK_REALESTATE)) return 'Real Estate'
+  }
+
+  if (inv.category === 'Altcoins') {
+    if (containsAny(combined, ['ethereum', 'eth'])) return 'Ethereum'
+    if (containsAny(combined, ['solana', 'sol'])) return 'Solana'
   }
 
   if (inv.category === 'Performance Gold') {
@@ -232,7 +251,7 @@ export function computeSubAllocation(
   const weightMap = new Map<string, number>()
   subWeights?.forEach((sw) => weightMap.set(sw.name, sw.weight))
 
-  return Array.from(subNames).sort().map((sub) => {
+  const allocations = Array.from(subNames).map((sub) => {
     const value = catInvestments
       .filter((inv) => inv.subcategory === sub)
       .reduce((sum, inv) => sum + inv.currentValue, 0)
@@ -246,5 +265,16 @@ export function computeSubAllocation(
       deviation: percentage - targetPercentage,
       color: getSubcategoryColor(sub, category),
     }
+  })
+
+  // Sort by target descending, then actual descending, then name
+  return allocations.sort((a, b) => {
+    if (Math.abs(b.targetPercentage - a.targetPercentage) > 0.0001) {
+      return b.targetPercentage - a.targetPercentage
+    }
+    if (Math.abs(b.percentage - a.percentage) > 0.0001) {
+      return b.percentage - a.percentage
+    }
+    return a.subcategory.localeCompare(b.subcategory)
   })
 }

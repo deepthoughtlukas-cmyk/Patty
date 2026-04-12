@@ -126,6 +126,11 @@ export default function App() {
           onAddAsset={(asset) => {
             setInvestments((prev) => prev ? [...prev, asset] : [asset])
           }}
+          onDeleteAsset={(key) => {
+            setInvestments((prev) =>
+              prev ? prev.filter((inv) => investmentKey(inv) !== key) : null
+            )
+          }}
         />
       )}
     </div>

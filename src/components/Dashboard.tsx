@@ -36,6 +36,7 @@ interface DashboardProps {
   onReset: () => void
   onRulesChanged?: () => void
   onAddAsset?: (asset: Investment) => void
+  onDeleteAsset?: (key: string) => void
 }
 
 function fmt(value: number, digits = 2): string {
@@ -73,7 +74,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
   )
 }
 
-export default function Dashboard({ investments, onCategoryChange, onReset, onRulesChanged, onAddAsset }: DashboardProps) {
+export default function Dashboard({ investments, onCategoryChange, onReset, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [rules, setRules] = useState<UserRule[]>(() => loadRules())
   const [rulesOpen, setRulesOpen] = useState(false)
@@ -199,7 +200,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profiles, null, 2))
     const downloadAnchorNode = document.createElement('a')
     downloadAnchorNode.setAttribute("href", dataStr)
-    downloadAnchorNode.setAttribute("download", "stockpicker_profiles.json")
+    downloadAnchorNode.setAttribute("download", "patty_profiles.json")
     document.body.appendChild(downloadAnchorNode)
     downloadAnchorNode.click()
     downloadAnchorNode.remove()
@@ -215,7 +216,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
         const content = evt.target?.result as string
         const parsed = JSON.parse(content)
         if (Array.isArray(parsed)) {
-          localStorage.setItem('stockpicker-target-profiles', JSON.stringify(parsed))
+          localStorage.setItem('patty-target-profiles', JSON.stringify(parsed))
           const loaded = loadProfiles()
           setProfiles(loaded)
           if (!loaded.find((p) => p.id === activeProfileId)) {
@@ -909,6 +910,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                   <th style={{ textAlign: 'right' }}>G/L</th>
                                   <th>Subcategory</th>
                                   <th>Category</th>
+                                  <th style={{ width: 36 }}></th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -958,6 +960,18 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                             </span>
                                           )}
                                         </div>
+                                      </td>
+                                      <td>
+                                        <button
+                                          className="btn-icon-sm btn-delete-asset"
+                                          title="Remove asset"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onDeleteAsset?.(investmentKey(inv))
+                                          }}
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
                                       </td>
                                     </tr>
                                   )
