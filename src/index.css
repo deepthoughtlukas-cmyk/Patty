@@ -542,6 +542,50 @@ body {
 }
 
 /* ===========================
+   Broker Availability Badges
+   =========================== */
+
+.broker-badges {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.broker-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+  opacity: 0.35;
+  line-height: 1;
+  min-width: 22px;
+  user-select: none;
+}
+
+.broker-badge:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.broker-badge.broker-active {
+  opacity: 1;
+  font-weight: 800;
+}
+
+.broker-badge.broker-override {
+  box-shadow: 0 2px 0 currentColor;
+}
+
+/* ===========================
    Learned Rules Panel
    =========================== */
 

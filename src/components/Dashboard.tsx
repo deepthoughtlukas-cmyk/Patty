@@ -18,6 +18,7 @@ import {
 } from '../utils/categorizer'
 import type { SubWeight } from '../utils/categorizer'
 import { loadRules, deleteRule, clearRules, exportRulesToJSON, importRulesFromFile, investmentKey, validIsin, type UserRule } from '../utils/userRules'
+import { ALL_BROKERS, BROKER_COLORS, BROKER_SHORT, cycleOverride, buildAvailabilityMap, exportBrokerOverrides, importBrokerOverrides, clearBrokerOverrides, getBrokerOverrideCount, type BrokerName, type AvailabilityStatus } from '../utils/brokerAvailability'
 import {
   loadProfiles,
   saveProfile,
@@ -81,6 +82,34 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const [addAssetOpen, setAddAssetOpen] = useState(false)
   const [newAsset, setNewAsset] = useState({ name: '', isin: '', currentValue: '', category: 'Stocks' as AssetCategory, subcategory: 'General' })
   const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [brokerVersion, setBrokerVersion] = useState(0)
+
+  // Build broker availability map (recomputes when investments or overrides change)
+  const brokerAvailMap = buildAvailabilityMap(investments, investmentKey)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _brokerDep = brokerVersion // force re-render on override toggle
+
+  const handleCycleBroker = (assetKey: string, broker: BrokerName) => {
+    cycleOverride(assetKey, broker)
+    setBrokerVersion((v) => v + 1)
+  }
+
+  const handleImportBrokerOverrides = async (file: File) => {
+    try {
+      const count = await importBrokerOverrides(file)
+      setBrokerVersion((v) => v + 1)
+      setImportMsg(`${count} Broker-Overrides importiert`)
+      setTimeout(() => setImportMsg(null), 3000)
+    } catch (err) {
+      setImportMsg(`Import fehlgeschlagen: ${String(err)}`)
+      setTimeout(() => setImportMsg(null), 4000)
+    }
+  }
+
+  const handleClearBrokerOverrides = () => {
+    clearBrokerOverrides()
+    setBrokerVersion((v) => v + 1)
+  }
 
   // Target profile state
   const [profiles, setProfiles] = useState<TargetProfile[]>(() => loadProfiles())
@@ -908,6 +937,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                   <th>Type</th>
                                   <th style={{ textAlign: 'right' }}>Value €</th>
                                   <th style={{ textAlign: 'right' }}>G/L</th>
+                                  <th>Broker</th>
                                   <th>Subcategory</th>
                                   <th>Category</th>
                                   <th style={{ width: 36 }}></th>
@@ -925,6 +955,35 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                       <td className="num">{fmt(inv.currentValue)}</td>
                                       <td className={`num ${gain >= 0 ? 'positive' : 'negative'}`}>
                                         {gain >= 0 ? '+' : ''}{(gainPct * 100).toFixed(1)} %
+                                      </td>
+                                      <td>
+                                        <div className="broker-badges">
+                                          {ALL_BROKERS.map((broker) => {
+                                            const assetKey = investmentKey(inv)
+                                            const status: AvailabilityStatus = brokerAvailMap.get(assetKey)?.[broker] ?? 'unavailable'
+                                            const isOn = status === 'available' || status === 'override-on'
+                                            const isOverride = status === 'override-on' || status === 'override-off'
+                                            const title = `${broker}: ${status === 'available' ? 'Verfügbar (auto)' : status === 'unavailable' ? 'Nicht verfügbar (auto)' : status === 'override-on' ? 'Manuell: Verfügbar ✓' : 'Manuell: Nicht verfügbar ✗'}\nKlick zum Umschalten`
+                                            return (
+                                              <button
+                                                key={broker}
+                                                className={`broker-badge ${isOn ? 'broker-active' : ''} ${isOverride ? 'broker-override' : ''}`}
+                                                style={isOn ? {
+                                                  background: BROKER_COLORS[broker] + '20',
+                                                  borderColor: BROKER_COLORS[broker] + '60',
+                                                  color: BROKER_COLORS[broker],
+                                                } : {}}
+                                                title={title}
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  handleCycleBroker(assetKey, broker)
+                                                }}
+                                              >
+                                                {BROKER_SHORT[broker]}
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
                                       </td>
                                       <td>
                                         <select
@@ -1085,6 +1144,43 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
           </div>
         )}
       </div>
+
+      {/* Broker Overrides Panel */}
+      {getBrokerOverrideCount() > 0 && (
+        <div className="card rules-card" style={{ marginTop: 12 }}>
+          <div className="card-title" style={{ fontSize: '0.85rem' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Coins size={14} />
+              Broker Overrides
+              <span className="rules-count">{getBrokerOverrideCount()}</span>
+            </span>
+          </div>
+          <div className="rules-actions" style={{ marginTop: 8 }}>
+            <div className="rules-actions-left">
+              <button className="btn btn-sm btn-ghost" onClick={exportBrokerOverrides}>
+                <Download size={13} /> Export
+              </button>
+              <label className="btn btn-sm btn-ghost" style={{ cursor: 'pointer' }}>
+                <Upload size={13} /> Import
+                <input
+                  type="file"
+                  accept=".json"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleImportBrokerOverrides(f)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
+            <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleClearBrokerOverrides}>
+              <XCircle size={13} style={{ marginRight: 4 }} />
+              Clear all
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
         <button className="btn btn-ghost" onClick={onReset}>
