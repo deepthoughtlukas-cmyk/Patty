@@ -6,7 +6,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, XCircle, Download, Upload, Plus, Coins } from 'lucide-react'
+import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, XCircle, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X } from 'lucide-react'
 import type { Investment, AssetCategory } from '../utils/parser'
 import {
   computeAllocation,
@@ -20,6 +20,21 @@ import type { SubWeight } from '../utils/categorizer'
 import { loadRules, deleteRule, clearRules, exportRulesToJSON, importRulesFromFile, investmentKey, validIsin, type UserRule } from '../utils/userRules'
 import { ALL_BROKERS, BROKER_COLORS, BROKER_SHORT, cycleOverride, buildAvailabilityMap, exportBrokerOverrides, importBrokerOverrides, clearBrokerOverrides, getBrokerOverrideCount, type BrokerName, type AvailabilityStatus } from '../utils/brokerAvailability'
 import {
+  loadDimensions,
+  saveDimension,
+  deleteDimension as deleteDimensionFn,
+  generateDimensionId,
+  computeDimensionAllocation,
+  buildDimensionTagMap,
+  runAutoTagging,
+  setDimensionTag,
+  getTagColor,
+  exportDimension,
+  importDimension,
+  type Dimension,
+  type DimensionAllocationItem,
+} from '../utils/dimensions'
+import {
   loadProfiles,
   saveProfile,
   deleteProfile as deleteProfileFn,
@@ -30,6 +45,7 @@ import {
   type TargetProfile,
   type TargetWeights,
 } from '../utils/targetProfiles'
+import { exportWorkspace, importWorkspace } from '../utils/workspace'
 
 interface DashboardProps {
   investments: Investment[]
@@ -121,6 +137,107 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const [showNewProfile, setShowNewProfile] = useState(false)
   const [newSubName, setNewSubName] = useState<Record<string, string>>({})
   const profileInputRef = useRef<HTMLInputElement>(null)
+
+  // Tab state: 'allocation' or 'dimensions'
+  const [activeTab, setActiveTab] = useState<'allocation' | 'dimensions'>('allocation')
+
+  // Dimension state
+  const [dimensions, setDimensions] = useState<Dimension[]>(() => loadDimensions())
+  const [activeDimensionId, setActiveDimensionId] = useState<string>(() => {
+    const dims = loadDimensions()
+    return dims.length > 0 ? dims[0].id : ''
+  })
+  const [dimVersion, setDimVersion] = useState(0)
+  const [showDimEditor, setShowDimEditor] = useState(false)
+  const [showNewDim, setShowNewDim] = useState(false)
+  const [newDimName, setNewDimName] = useState('')
+  const [newDimTagInput, setNewDimTagInput] = useState('')
+  const [editDimTagInput, setEditDimTagInput] = useState('')
+  const dimImportRef = useRef<HTMLInputElement>(null)
+
+  // Run auto-tagging when investments change
+  const autoTagRan = useRef(false)
+  if (investments.length > 0 && !autoTagRan.current) {
+    runAutoTagging(investments)
+    autoTagRan.current = true
+  }
+
+  const activeDimension = dimensions.find((d) => d.id === activeDimensionId) || dimensions[0]
+  const dimAllocation: DimensionAllocationItem[] = activeDimension
+    ? computeDimensionAllocation(investments, activeDimension)
+    : []
+  const dimTagMap = activeDimension ? buildDimensionTagMap(activeDimension.id) : new Map<string, string>()
+
+  // Dimension handlers
+  const refreshDimensions = () => {
+    setDimensions(loadDimensions())
+    setDimVersion((v) => v + 1)
+  }
+
+  const handleSetDimTag = (assetKey: string, dimId: string, tag: string) => {
+    setDimensionTag(dimId, assetKey, tag, false)
+    setDimVersion((v) => v + 1)
+  }
+
+  const handleCreateDimension = () => {
+    if (!newDimName.trim()) return
+    const dim: Dimension = {
+      id: generateDimensionId(),
+      name: newDimName.trim(),
+      tags: [],
+      color: '#60a5fa',
+    }
+    saveDimension(dim)
+    refreshDimensions()
+    setActiveDimensionId(dim.id)
+    setNewDimName('')
+    setShowNewDim(false)
+    setShowDimEditor(true)
+  }
+
+  const handleDeleteDimension = (id: string) => {
+    deleteDimensionFn(id)
+    const updated = loadDimensions()
+    setDimensions(updated)
+    if (activeDimensionId === id && updated.length > 0) {
+      setActiveDimensionId(updated[0].id)
+    }
+    setDimVersion((v) => v + 1)
+  }
+
+  const handleAddTagToDimension = (dimId: string, tagName: string) => {
+    if (!tagName.trim()) return
+    const dim = dimensions.find((d) => d.id === dimId)
+    if (!dim || dim.tags.includes(tagName.trim())) return
+    const updated = { ...dim, tags: [...dim.tags, tagName.trim()] }
+    saveDimension(updated)
+    refreshDimensions()
+  }
+
+  const handleRemoveTagFromDimension = (dimId: string, tagName: string) => {
+    const dim = dimensions.find((d) => d.id === dimId)
+    if (!dim) return
+    const updated = { ...dim, tags: dim.tags.filter((t) => t !== tagName) }
+    saveDimension(updated)
+    refreshDimensions()
+  }
+
+  const handleExportDimension = () => {
+    if (activeDimensionId) exportDimension(activeDimensionId)
+  }
+
+  const handleImportDimension = async (file: File) => {
+    try {
+      const id = await importDimension(file)
+      refreshDimensions()
+      setActiveDimensionId(id)
+      setImportMsg('Dimension importiert')
+      setTimeout(() => setImportMsg(null), 3000)
+    } catch (err) {
+      setImportMsg(`Import fehlgeschlagen: ${String(err)}`)
+      setTimeout(() => setImportMsg(null), 4000)
+    }
+  }
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0]
   const activeWeights = activeProfile.weights
@@ -371,6 +488,26 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
         ))}
       </div>
 
+      {/* Tab Switcher */}
+      <div className="alloc-tabs">
+        <button
+          className={`alloc-tab${activeTab === 'allocation' ? ' active' : ''}`}
+          onClick={() => setActiveTab('allocation')}
+        >
+          <BarChart3 size={14} className="tab-icon" />
+          Allocation
+        </button>
+        <button
+          className={`alloc-tab${activeTab === 'dimensions' ? ' active' : ''}`}
+          onClick={() => setActiveTab('dimensions')}
+        >
+          <Layers size={14} className="tab-icon" />
+          Dimensionen
+        </button>
+      </div>
+
+      {activeTab === 'allocation' && (
+      <>
       {/* Charts */}
       <div className="dashboard-grid">
         {/* Actual Allocation */}
@@ -799,6 +936,246 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
           })}
         </div>
       </div>
+      </>
+      )}
+
+      {activeTab === 'dimensions' && (
+        <div className="card dim-panel" style={{ marginBottom: 24 }}>
+          <div className="card-title">
+            <Globe size={14} />
+            Cross-Dimension Analysis
+          </div>
+
+          {/* Top bar: dimension selector + actions */}
+          <div className="dim-top-bar">
+            <div className="dim-selector">
+              <select
+                className="cat-select"
+                value={activeDimensionId}
+                onChange={(e) => {
+                  setActiveDimensionId(e.target.value)
+                  setShowDimEditor(false)
+                }}
+              >
+                {dimensions.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="dim-actions">
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={handleExportDimension}
+                title="Dimension exportieren"
+              >
+                <Download size={13} />
+              </button>
+              <label className="btn btn-sm btn-ghost" style={{ cursor: 'pointer' }} title="Dimension importieren">
+                <Upload size={13} />
+                <input
+                  type="file"
+                  accept=".json"
+                  style={{ display: 'none' }}
+                  ref={dimImportRef}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleImportDimension(f)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              <button
+                className={`btn btn-sm btn-ghost${showDimEditor ? ' active' : ''}`}
+                onClick={() => setShowDimEditor(!showDimEditor)}
+                title="Dimension bearbeiten"
+              >
+                <Settings size={13} />
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => setShowNewDim(!showNewDim)}
+                title="Neue Dimension"
+              >
+                <Plus size={13} /> Neu
+              </button>
+            </div>
+          </div>
+
+          {/* New dimension form */}
+          {showNewDim && (
+            <div className="new-dim-form">
+              <div className="new-dim-form-title">Neue Dimension erstellen</div>
+              <div className="new-dim-fields">
+                <div className="new-dim-field" style={{ flex: 1 }}>
+                  <label>Name</label>
+                  <input
+                    type="text"
+                    placeholder="z.B. Thema, Risiko..."
+                    value={newDimName}
+                    onChange={(e) => setNewDimName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCreateDimension()}
+                  />
+                </div>
+                <button
+                  className="btn btn-sm btn-gold"
+                  onClick={handleCreateDimension}
+                  disabled={!newDimName.trim()}
+                  style={{ marginBottom: 1 }}
+                >
+                  Erstellen
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => { setShowNewDim(false); setNewDimName('') }}
+                  style={{ marginBottom: 1 }}
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Dimension editor */}
+          {showDimEditor && activeDimension && (
+            <div className="dim-editor">
+              <div className="dim-editor-title">
+                {activeDimension.name} — Tags verwalten
+              </div>
+              <div className="dim-editor-tags">
+                {activeDimension.tags.map((tag) => (
+                  <span className="dim-editor-tag" key={tag}>
+                    <span
+                      className="dim-bar-tag-dot"
+                      style={{ background: getTagColor(activeDimension, tag), width: 8, height: 8 }}
+                    />
+                    {tag}
+                    <span
+                      className="remove-tag"
+                      onClick={() => handleRemoveTagFromDimension(activeDimension.id, tag)}
+                    >
+                      <X size={12} />
+                    </span>
+                  </span>
+                ))}
+                {activeDimension.tags.length === 0 && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                    Keine Tags — füge welche hinzu
+                  </span>
+                )}
+              </div>
+              <div className="dim-editor-add-row">
+                <input
+                  type="text"
+                  placeholder="Neuer Tag..."
+                  value={editDimTagInput}
+                  onChange={(e) => setEditDimTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleAddTagToDimension(activeDimension.id, editDimTagInput)
+                      setEditDimTagInput('')
+                    }
+                  }}
+                />
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => {
+                    handleAddTagToDimension(activeDimension.id, editDimTagInput)
+                    setEditDimTagInput('')
+                  }}
+                  disabled={!editDimTagInput.trim()}
+                >
+                  <Plus size={11} /> Hinzufügen
+                </button>
+              </div>
+              {/* Delete dimension button (not for defaults) */}
+              {activeDimension.id !== 'geo' && activeDimension.id !== 'market-type' && (
+                <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-sm btn-ghost btn-danger-ghost"
+                    onClick={() => handleDeleteDimension(activeDimension.id)}
+                  >
+                    <Trash2 size={12} /> Dimension löschen
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dimension allocation content */}
+          {activeDimension && dimAllocation.length > 0 && (
+            <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24, alignItems: 'center' }}>
+              {/* Donut chart */}
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={dimAllocation.map((a) => ({
+                      name: a.tag,
+                      value: a.percentage,
+                      color: a.color,
+                      targetPct: 0,
+                    }))}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={85}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {dimAllocation.map((a, i) => (
+                      <Cell key={i} fill={a.color} stroke="none" />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const d = payload[0]
+                      const item = dimAllocation.find((a) => a.tag === d.name)
+                      return (
+                        <div style={{
+                          background: 'var(--bg-card)',
+                          border: '1px solid var(--border-accent)',
+                          borderRadius: 'var(--radius-md)',
+                          padding: '10px 14px',
+                          fontSize: '0.82rem',
+                          color: 'var(--text-primary)',
+                          boxShadow: 'var(--shadow-card)',
+                        }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
+                          <div style={{ color: 'var(--text-secondary)' }}>
+                            {((d.value as number) * 100).toFixed(1)} % · {fmtEur(item?.value || 0)}
+                          </div>
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                            {item?.assetCount || 0} Assets
+                          </div>
+                        </div>
+                      )
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Legend */}
+              <div className="legend">
+                {dimAllocation.map((a) => (
+                  <div className="legend-item" key={a.tag}>
+                    <span className="legend-dot" style={{ background: a.color }} />
+                    <span className="legend-name">{a.tag}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginRight: 4 }}>
+                      {a.assetCount}
+                    </span>
+                    <span className="legend-pct">{(a.percentage * 100).toFixed(1)} %</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeDimension && dimAllocation.length === 0 && (
+            <div className="empty-state">
+              Keine Assets mit Tags in dieser Dimension. Weise Tags über die Holdings-Tabelle zu.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Holdings Table grouped by category */}
       <div className="card holdings-section">
@@ -938,6 +1315,9 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                   <th style={{ textAlign: 'right' }}>Value €</th>
                                   <th style={{ textAlign: 'right' }}>G/L</th>
                                   <th>Broker</th>
+                                  {activeDimension && (
+                                    <th title={activeDimension.name}>{activeDimension.name.slice(0, 10)}</th>
+                                  )}
                                   <th>Subcategory</th>
                                   <th>Category</th>
                                   <th style={{ width: 36 }}></th>
@@ -985,6 +1365,22 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                           })}
                                         </div>
                                       </td>
+                                      {activeDimension && (
+                                        <td>
+                                          <select
+                                            className="cat-select dim-tag-select"
+                                            value={dimTagMap.get(investmentKey(inv)) || ''}
+                                            onChange={(e) => {
+                                              handleSetDimTag(investmentKey(inv), activeDimension.id, e.target.value)
+                                            }}
+                                          >
+                                            <option value="">—</option>
+                                            {activeDimension.tags.map((tag) => (
+                                              <option key={tag} value={tag}>{tag}</option>
+                                            ))}
+                                          </select>
+                                        </td>
+                                      )}
                                       <td>
                                         <select
                                           className="cat-select sub-select"
@@ -1182,7 +1578,33 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button className="btn btn-ghost" onClick={exportWorkspace}>
+            Export Workspace
+          </button>
+          <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
+            Import Workspace
+            <input
+              type="file"
+              accept=".json"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                try {
+                  await importWorkspace(file)
+                  // Force reload to apply all local storage values properly
+                  window.location.reload()
+                } catch (err) {
+                  setImportMsg(String(err))
+                  setTimeout(() => setImportMsg(null), 4000)
+                }
+                e.target.value = ''
+              }}
+            />
+          </label>
+        </div>
         <button className="btn btn-ghost" onClick={onReset}>
           Upload new CSV
         </button>

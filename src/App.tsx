@@ -1,14 +1,31 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Beef, Upload } from 'lucide-react'
 import { parseCSV, type Investment, type AssetCategory } from './utils/parser'
 import { categorizeWithRules } from './utils/categorizer'
 import { saveRule, investmentKey } from './utils/userRules'
+import { exportWorkspace, importWorkspace } from './utils/workspace'
 import Dashboard from './components/Dashboard'
 
 export default function App() {
-  const [investments, setInvestments] = useState<Investment[] | null>(null)
+  const [investments, setInvestments] = useState<Investment[] | null>(() => {
+    try {
+      const raw = localStorage.getItem('patty-investments')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (investments) {
+      localStorage.setItem('patty-investments', JSON.stringify(investments))
+    } else {
+      localStorage.removeItem('patty-investments')
+    }
+  }, [investments])
 
   const handleFile = useCallback((file: File) => {
     setError(null)
@@ -108,6 +125,39 @@ export default function App() {
               accept=".csv"
               onChange={handleInputChange}
             />
+          </div>
+
+          <div style={{ marginTop: 24, textAlign: 'center' }}>
+            {success && (
+              <div style={{ color: 'var(--green)', marginBottom: 12, fontSize: '0.9rem' }}>
+                {success}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={exportWorkspace}>
+                Export Workspace
+              </button>
+              <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
+                Import Workspace
+                <input
+                  type="file"
+                  accept=".json"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    try {
+                      await importWorkspace(file)
+                      // Force reload to apply all local storage values properly
+                      window.location.reload()
+                    } catch (err) {
+                      setError(String(err))
+                    }
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
           </div>
         </div>
       ) : (

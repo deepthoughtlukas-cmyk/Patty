@@ -50,7 +50,7 @@ const OVERRIDE_STORAGE_KEY = 'patty-broker-overrides'
 
 // ---------- Override persistence ----------
 
-function loadOverrides(): BrokerOverride[] {
+export function loadOverrides(): BrokerOverride[] {
   try {
     const raw = localStorage.getItem(OVERRIDE_STORAGE_KEY)
     return raw ? JSON.parse(raw) : []
@@ -59,7 +59,7 @@ function loadOverrides(): BrokerOverride[] {
   }
 }
 
-function saveOverrides(entries: BrokerOverride[]): void {
+export function saveOverrides(entries: BrokerOverride[]): void {
   localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(entries))
 }
 
