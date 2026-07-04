@@ -12,6 +12,8 @@
     "rollup": "npm:@rollup/wasm-node"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.462.0",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",

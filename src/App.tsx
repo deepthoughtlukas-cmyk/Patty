@@ -88,6 +88,16 @@ export default function App() {
             <p>Portfolio Allocation Tracker Tool for You</p>
           </div>
         </div>
+        {investments && (
+          <button
+            className="btn btn-ghost"
+            onClick={() => setInvestments(null)}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '0.88rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)', borderRadius: 'var(--radius-md)' }}
+            title="Neue CSV-Datei hochladen"
+          >
+            <Upload size={15} /> Upload new CSV
+          </button>
+        )}
       </header>
 
       {!investments ? (
@@ -164,7 +174,6 @@ export default function App() {
         <Dashboard
           investments={investments}
           onCategoryChange={handleCategoryChange}
-          onReset={() => setInvestments(null)}
           onRulesChanged={() => {
             // Re-categorize with updated rules after a rule is deleted/cleared
             setInvestments((prev) => {

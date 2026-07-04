@@ -147,7 +147,7 @@ export function loadDimensions(): Dimension[] {
     if (!raw) return [...DEFAULT_DIMENSIONS]
     const parsed: Dimension[] = JSON.parse(raw)
     if (!Array.isArray(parsed) || parsed.length === 0) return [...DEFAULT_DIMENSIONS]
-    return parsed
+    return parsed.filter((d): d is Dimension => d && typeof d === 'object' && typeof d.id === 'string' && typeof d.name === 'string')
   } catch {
     return [...DEFAULT_DIMENSIONS]
   }
@@ -187,7 +187,8 @@ export function loadDimensionTags(): DimensionTagEntry[] {
     const raw = localStorage.getItem(TAGS_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((t): t is DimensionTagEntry => t && typeof t === 'object' && typeof t.dimensionId === 'string' && typeof t.assetKey === 'string')
   } catch {
     return []
   }

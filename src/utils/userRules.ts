@@ -1,4 +1,6 @@
 import type { AssetCategory, Investment } from './parser'
+import { loadDepositories, saveDepositories, loadDepositoryList, saveDepositoryList } from './depositories'
+import { loadSplits, saveSplits, type AssetSplitConfig } from './assetSplits'
 
 const STORAGE_KEY = 'patty-user-rules'
 
@@ -15,7 +17,8 @@ export function loadRules(): UserRule[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((r): r is UserRule => r && typeof r === 'object' && typeof r.name === 'string')
   } catch {
     return []
   }
@@ -88,10 +91,19 @@ export function hasUserRule(inv: Investment): boolean {
   return rules.some((r) => (validIsin(r.isin) || r.name) === key)
 }
 
-/** Export all rules as a JSON file download */
+/** Export all rules and depositories as a JSON file download */
 export function exportRulesToJSON(): void {
   const rules = loadRules()
-  const blob = new Blob([JSON.stringify(rules, null, 2)], { type: 'application/json' })
+  const depositories = loadDepositories()
+  const depositoryList = loadDepositoryList()
+  const splits = loadSplits()
+  const exportData = {
+    rules,
+    depositories,
+    depositoryList,
+    splits
+  }
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -109,13 +121,37 @@ export function importRulesFromFile(file: File): Promise<number> {
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string
-        const imported: UserRule[] = JSON.parse(text)
-        if (!Array.isArray(imported)) {
-          reject(new Error('Invalid format: expected an array of rules'))
+        const imported = JSON.parse(text)
+        
+        let rulesArray: UserRule[] = []
+        if (Array.isArray(imported)) {
+          // Legacy format: just an array of rules
+          rulesArray = imported
+        } else if (imported && typeof imported === 'object' && imported.rules) {
+          // New format: { rules: [], depositories: {}, depositoryList: [] }
+          rulesArray = imported.rules
+          if (imported.depositories) {
+            const currentDeps = loadDepositories()
+            saveDepositories({ ...currentDeps, ...imported.depositories })
+          }
+          if (imported.depositoryList) {
+            const currentList = new Set(loadDepositoryList())
+            imported.depositoryList.forEach((d: string) => currentList.add(d))
+            saveDepositoryList(Array.from(currentList))
+          }
+          if (imported.splits) {
+            // Merge or overwrite? Let's overwrite for simplicity or merge by assetKey
+            const existingSplits = new Map(loadSplits().map(s => [s.assetKey, s]))
+            imported.splits.forEach((s: AssetSplitConfig) => existingSplits.set(s.assetKey, s))
+            saveSplits(Array.from(existingSplits.values()))
+          }
+        } else {
+          reject(new Error('Invalid format: expected an array of rules or a combined export object'))
           return
         }
+
         let count = 0
-        for (const rule of imported) {
+        for (const rule of rulesArray) {
           if (rule.category && (rule.isin || rule.name)) {
             saveRule(rule)
             count++

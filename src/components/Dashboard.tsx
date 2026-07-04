@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   PieChart,
   Pie,
@@ -6,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, XCircle, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone } from 'lucide-react'
 import type { Investment, AssetCategory } from '../utils/parser'
 import {
   computeAllocation,
@@ -17,8 +18,8 @@ import {
   DEFAULT_SUBCATEGORIES,
 } from '../utils/categorizer'
 import type { SubWeight } from '../utils/categorizer'
-import { loadRules, deleteRule, clearRules, exportRulesToJSON, importRulesFromFile, investmentKey, validIsin, type UserRule } from '../utils/userRules'
-import { ALL_BROKERS, BROKER_COLORS, BROKER_SHORT, cycleOverride, buildAvailabilityMap, exportBrokerOverrides, importBrokerOverrides, clearBrokerOverrides, getBrokerOverrideCount, type BrokerName, type AvailabilityStatus } from '../utils/brokerAvailability'
+import { loadRules, exportRulesToJSON, importRulesFromFile, investmentKey, validIsin, type UserRule } from '../utils/userRules'
+import { ALL_BROKERS, BROKER_COLORS, BROKER_SHORT, cycleOverride, buildAvailabilityMap, exportBrokerOverrides, importBrokerOverrides, type BrokerName, type AvailabilityStatus } from '../utils/brokerAvailability'
 import {
   loadDimensions,
   saveDimension,
@@ -46,11 +47,14 @@ import {
   type TargetWeights,
 } from '../utils/targetProfiles'
 import { exportWorkspace, importWorkspace } from '../utils/workspace'
+import { generatePDF, generateMobileRebalancePDF } from '../utils/pdfGenerator'
+import { loadDepositories, setDepository, bulkSetDepository, loadDepositoryList, saveDepositoryList, saveDepositories } from '../utils/depositories'
+import { applySplits, loadSplits, setSplitConfig, deleteSplitConfig, getSplitInvestmentKey, type AssetSplitConfig, type CoinSplit } from '../utils/assetSplits'
+import DataManagementModal from './DataManagementModal'
 
 interface DashboardProps {
   investments: Investment[]
   onCategoryChange: (key: string, category: AssetCategory, subcategory?: string) => void
-  onReset: () => void
   onRulesChanged?: () => void
   onAddAsset?: (asset: Investment) => void
   onDeleteAsset?: (key: string) => void
@@ -91,17 +95,22 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
   )
 }
 
-export default function Dashboard({ investments, onCategoryChange, onReset, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
+export default function Dashboard({ investments, onCategoryChange, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+
+  // Split state
+  const [splitVersion, setSplitVersion] = useState(0)
+  const displayInvestments = useMemo(() => applySplits(investments), [investments, splitVersion])
+
   const [rules, setRules] = useState<UserRule[]>(() => loadRules())
-  const [rulesOpen, setRulesOpen] = useState(false)
   const [addAssetOpen, setAddAssetOpen] = useState(false)
   const [newAsset, setNewAsset] = useState({ name: '', isin: '', currentValue: '', category: 'Stocks' as AssetCategory, subcategory: 'General' })
   const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [dataModalOpen, setDataModalOpen] = useState(false)
   const [brokerVersion, setBrokerVersion] = useState(0)
 
   // Build broker availability map (recomputes when investments or overrides change)
-  const brokerAvailMap = buildAvailabilityMap(investments, investmentKey)
+  const brokerAvailMap = buildAvailabilityMap(displayInvestments, investmentKey)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _brokerDep = brokerVersion // force re-render on override toggle
 
@@ -122,11 +131,6 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
     }
   }
 
-  const handleClearBrokerOverrides = () => {
-    clearBrokerOverrides()
-    setBrokerVersion((v) => v + 1)
-  }
-
   // Target profile state
   const [profiles, setProfiles] = useState<TargetProfile[]>(() => loadProfiles())
   const [activeProfileId, setActiveProfileIdState] = useState<string>(() => getActiveProfileId())
@@ -136,7 +140,6 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const [newProfileName, setNewProfileName] = useState('')
   const [showNewProfile, setShowNewProfile] = useState(false)
   const [newSubName, setNewSubName] = useState<Record<string, string>>({})
-  const profileInputRef = useRef<HTMLInputElement>(null)
 
   // Tab state: 'allocation' or 'dimensions'
   const [activeTab, setActiveTab] = useState<'allocation' | 'dimensions'>('allocation')
@@ -153,18 +156,190 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const [newDimName, setNewDimName] = useState('')
   const [newDimTagInput, setNewDimTagInput] = useState('')
   const [editDimTagInput, setEditDimTagInput] = useState('')
-  const dimImportRef = useRef<HTMLInputElement>(null)
+
+  // Excluded assets/categories state for Cross-Dimension Analysis
+  const [excludedAssetKeys, setExcludedAssetKeys] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('patty-dim-excluded-assets')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  const [excludedCategories, setExcludedCategories] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('patty-dim-excluded-categories')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  const [showExclusionEditor, setShowExclusionEditor] = useState(false)
+  const [exclusionAssetSearch, setExclusionAssetSearch] = useState('')
+
+  const handleToggleAssetExclusion = (key: string) => {
+    const next = new Set(excludedAssetKeys)
+    if (next.has(key)) {
+      next.delete(key)
+    } else {
+      next.add(key)
+    }
+    setExcludedAssetKeys(next)
+    localStorage.setItem('patty-dim-excluded-assets', JSON.stringify(Array.from(next)))
+  }
+
+  const handleToggleCategoryExclusion = (category: string) => {
+    const next = new Set(excludedCategories)
+    if (next.has(category)) {
+      next.delete(category)
+    } else {
+      next.add(category)
+    }
+    setExcludedCategories(next)
+    localStorage.setItem('patty-dim-excluded-categories', JSON.stringify(Array.from(next)))
+  }
+
+  const handleResetExclusions = () => {
+    setExcludedAssetKeys(new Set())
+    setExcludedCategories(new Set())
+    localStorage.removeItem('patty-dim-excluded-assets')
+    localStorage.removeItem('patty-dim-excluded-categories')
+  }
+
+  // Depositories state
+  const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set())
+  const [depositories, setDepositoriesState] = useState(() => loadDepositories())
+  const [depositoryList, setDepositoryList] = useState(() => loadDepositoryList())
+  const [depoVersion, setDepoVersion] = useState(0)
+  
+  const [showDepoEditor, setShowDepoEditor] = useState(false)
+  const [newDepoName, setNewDepoName] = useState('')
+  
+  const [splitModalAsset, setSplitModalAsset] = useState<Investment | null>(null)
+  const [splitConfig, setSplitConfigState] = useState<AssetSplitConfig | null>(null)
+  const [originalSplitConfig, setOriginalSplitConfig] = useState<AssetSplitConfig | null>(null)
+
+  const openSplitModal = (inv: Investment) => {
+    if (!inv) return
+    let targetInv = inv
+    if (inv._originalKey) {
+       targetInv = investments?.find(i => investmentKey(i) === inv._originalKey) || inv
+    }
+
+    const key = investmentKey(targetInv)
+    const existingSplits = loadSplits()
+    const existing = Array.isArray(existingSplits) ? existingSplits.find(s => s.assetKey === key) : undefined
+
+    if (existing && !Array.isArray(existing.splits)) {
+      existing.splits = []
+    }
+
+    let defaultOunces = targetInv.quantity || 0
+    if (targetInv.isin === 'DE000A2T0VS9' || targetInv.name.toUpperCase().includes('SILBER 80')) {
+      // Xtrackers Physical Silver ETC represents 3 troy ounces per share
+      defaultOunces = (targetInv.quantity || 0) * 3
+    } else if (targetInv.isin === 'DE000A0S9GB0' || targetInv.name.toUpperCase().includes('XETRA-GOLD')) {
+      // Xetra-Gold represents 1 gram of gold per share, which is 1 / 31.1035 troy ounces
+      defaultOunces = (targetInv.quantity || 0) / 31.1035
+    }
+
+    const initialConfig = existing || {
+      assetKey: key,
+      totalOunces: defaultOunces,
+      splits: []
+    }
+
+    setSplitModalAsset(targetInv)
+    setSplitConfigState(JSON.parse(JSON.stringify(initialConfig)))
+    setOriginalSplitConfig(JSON.parse(JSON.stringify(initialConfig)))
+  }
+
+  const hasUnsavedSplitChanges = () => {
+    if (!splitConfig || !originalSplitConfig) return false
+    return JSON.stringify(splitConfig) !== JSON.stringify(originalSplitConfig)
+  }
+
+  const handleCloseSplitModal = () => {
+    if (hasUnsavedSplitChanges()) {
+      const confirmClose = window.confirm(
+        'Möchtest du das Fenster wirklich schließen? Ungespeicherte Änderungen gehen verloren.'
+      )
+      if (!confirmClose) return
+    }
+    setSplitModalAsset(null)
+    setOriginalSplitConfig(null)
+  }
+
+  const handleSaveSplit = () => {
+    if (!splitConfig || !splitModalAsset) return
+    setSplitConfig(splitConfig)
+    
+    // Sync depositories
+    const allDeps = loadDepositories()
+    for (const s of splitConfig.splits) {
+       if (s.depository) {
+          allDeps[getSplitInvestmentKey(splitModalAsset, s.id)] = s.depository
+       }
+    }
+    saveDepositories(allDeps)
+    refreshDepositories()
+    setSplitModalAsset(null)
+    setOriginalSplitConfig(null)
+    setSplitVersion(v => v + 1)
+  }
+
+  const refreshDepositories = () => {
+    setDepositoriesState(loadDepositories())
+    setDepositoryList(loadDepositoryList())
+    setDepoVersion(v => v + 1)
+  }
+
+  const handleAddDepository = () => {
+    if (!newDepoName.trim()) return
+    const list = new Set(depositoryList)
+    list.add(newDepoName.trim())
+    saveDepositoryList(Array.from(list))
+    setNewDepoName('')
+    refreshDepositories()
+  }
+
+  const handleDeleteDepository = (name: string) => {
+    const list = depositoryList.filter(d => d !== name)
+    saveDepositoryList(list)
+    refreshDepositories()
+  }
+
+  const handleSetDepository = (key: string, name: string) => {
+    setDepository(key, name)
+    refreshDepositories()
+  }
+
+  const handleBulkSetDepository = (name: string) => {
+    if (selectedAssets.size === 0) return
+    bulkSetDepository(Array.from(selectedAssets), name === 'none' ? '' : name)
+    refreshDepositories()
+    setSelectedAssets(new Set())
+  }
 
   // Run auto-tagging when investments change
   const autoTagRan = useRef(false)
-  if (investments.length > 0 && !autoTagRan.current) {
-    runAutoTagging(investments)
+  if (displayInvestments.length > 0 && !autoTagRan.current) {
+    runAutoTagging(displayInvestments)
     autoTagRan.current = true
   }
 
+  const filteredInvestments = useMemo(() => {
+    return displayInvestments.filter((inv) => {
+      const key = investmentKey(inv)
+      if (excludedAssetKeys.has(key)) return false
+      if (excludedCategories.has(inv.category)) return false
+      return true
+    })
+  }, [displayInvestments, excludedAssetKeys, excludedCategories])
+
   const activeDimension = dimensions.find((d) => d.id === activeDimensionId) || dimensions[0]
   const dimAllocation: DimensionAllocationItem[] = activeDimension
-    ? computeDimensionAllocation(investments, activeDimension)
+    ? computeDimensionAllocation(filteredInvestments, activeDimension)
     : []
   const dimTagMap = activeDimension ? buildDimensionTagMap(activeDimension.id) : new Map<string, string>()
 
@@ -246,18 +421,6 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   const refreshRules = useCallback(() => {
     setRules(loadRules())
   }, [])
-
-  const handleDeleteRule = (key: string) => {
-    deleteRule(key)
-    refreshRules()
-    onRulesChanged?.()
-  }
-
-  const handleClearRules = () => {
-    clearRules()
-    refreshRules()
-    onRulesChanged?.()
-  }
 
   const handleImportRules = async (file: File) => {
     try {
@@ -352,10 +515,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
     downloadAnchorNode.remove()
   }
 
-  const handleImportProfiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
+  const handleImportProfiles = (file: File) => {
     const reader = new FileReader()
     reader.onload = (evt) => {
       try {
@@ -374,7 +534,6 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
       }
     }
     reader.readAsText(file)
-    if (e.target) e.target.value = ''
   }
 
   const updateDraftSubWeight = (cat: string, subName: string, weight: number) => {
@@ -403,7 +562,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
     setDraftSubWeights({ ...draftSubWeights, [cat]: current.filter((sw) => sw.name !== subName) })
   }
 
-  const activeInvestments = investments.filter((inv) => inv.currentValue > 0)
+  const activeInvestments = displayInvestments.filter((inv) => inv.currentValue > 0)
   const totalValue = activeInvestments.reduce((s, inv) => s + inv.currentValue, 0)
   const totalCost = activeInvestments.reduce((s, inv) => s + inv.purchasePrice * inv.quantity, 0)
   const totalGain = totalValue - totalCost
@@ -415,13 +574,20 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
   // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
   const TROY_OZ_IN_GRAMS = 31.1035
   const DEALER_PREMIUM = 1.03
-  const goldEntry = investments.find((inv) => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold'))
+  const goldEntry = displayInvestments.find((inv) => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold'))
   const goldGramPrice = goldEntry?.currentPrice || 0
   const goldOzPrice = goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
 
-  // Silver spot price per oz (manually maintained — no silver ETC in portfolio data)
-  // Update this value periodically to reflect current market price
-  const SILVER_OZ_PRICE_EUR = 30
+  // Extract silver price per oz dynamically if available, otherwise default to 30
+  const silverEntry = displayInvestments.find((inv) =>
+    (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver') || inv.isin === 'XC0009653103') &&
+    inv.currentPrice > 0
+  )
+  // For A2T0VS (Xtrackers Physical Silver ETC), 1 share represents 3 troy ounces.
+  // We divide the price of 1 share by 3 to get the price per troy ounce.
+  const silverSharePrice = silverEntry ? silverEntry.currentPrice : 30
+  const isXtrackersSilver = silverEntry && (silverEntry.isin === 'DE000A2T0VS9' || silverEntry.name.toUpperCase().includes('SILBER 80'))
+  const SILVER_OZ_PRICE_EUR = isXtrackersSilver ? silverSharePrice / 3 : silverSharePrice
 
   const actualChartData = allocation.map((a) => ({
     name: a.category,
@@ -602,20 +768,6 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                     <Trash2 size={12} /> Delete
                   </button>
                 )}
-                <div style={{ flex: 1, minWidth: '10px' }} />
-                <button className="btn btn-sm btn-ghost" onClick={handleExportProfiles} title="Export Profiles">
-                  <Download size={12} />
-                </button>
-                <button className="btn btn-sm btn-ghost" onClick={() => profileInputRef.current?.click()} title="Import Profiles">
-                  <Upload size={12} />
-                </button>
-                <input
-                  type="file"
-                  accept=".json"
-                  style={{ display: 'none' }}
-                  ref={profileInputRef}
-                  onChange={handleImportProfiles}
-                />
               </div>
               {showNewProfile && (
                 <div className="new-profile-row">
@@ -923,6 +1075,12 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                               <TrendingDown size={9} style={{ marginRight: 3 }} />Sell {fmtEur(subAbsDiff)}
                             </span>
                           )}
+                          {/* Coin recommendation badge for Silber */}
+                          {sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0 && subAbsDiff >= SILVER_OZ_PRICE_EUR && (
+                            <span title={`Kaufempfehlung ≥ 1 oz Silber (${fmtEur(SILVER_OZ_PRICE_EUR)})`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                              <Coins size={14} color="var(--text-secondary)" />
+                            </span>
+                          )}
                           <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }} title="Actual % / Target % of total portfolio">
                             {(subActualAbs * 100).toFixed(1)}% / {(subAbsTarget * 100).toFixed(1)}% Portfolio
                           </span>
@@ -955,6 +1113,8 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                 onChange={(e) => {
                   setActiveDimensionId(e.target.value)
                   setShowDimEditor(false)
+                  setShowNewDim(false)
+                  setShowExclusionEditor(false)
                 }}
               >
                 {dimensions.map((d) => (
@@ -964,36 +1124,35 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
             </div>
             <div className="dim-actions">
               <button
-                className="btn btn-sm btn-ghost"
-                onClick={handleExportDimension}
-                title="Dimension exportieren"
+                className={`btn btn-sm btn-ghost${showExclusionEditor ? ' active' : ''}`}
+                onClick={() => {
+                  setShowExclusionEditor(!showExclusionEditor)
+                  setShowDimEditor(false)
+                  setShowNewDim(false)
+                }}
+                title="Filter / Assets ausschließen"
               >
-                <Download size={13} />
+                <EyeOff size={13} style={{ marginRight: 4 }} />
+                Filter {(excludedAssetKeys.size > 0 || excludedCategories.size > 0) ? `(${excludedAssetKeys.size + excludedCategories.size})` : ''}
               </button>
-              <label className="btn btn-sm btn-ghost" style={{ cursor: 'pointer' }} title="Dimension importieren">
-                <Upload size={13} />
-                <input
-                  type="file"
-                  accept=".json"
-                  style={{ display: 'none' }}
-                  ref={dimImportRef}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) handleImportDimension(f)
-                    e.target.value = ''
-                  }}
-                />
-              </label>
               <button
                 className={`btn btn-sm btn-ghost${showDimEditor ? ' active' : ''}`}
-                onClick={() => setShowDimEditor(!showDimEditor)}
+                onClick={() => {
+                  setShowDimEditor(!showDimEditor)
+                  setShowNewDim(false)
+                  setShowExclusionEditor(false)
+                }}
                 title="Dimension bearbeiten"
               >
                 <Settings size={13} />
               </button>
               <button
                 className="btn btn-sm btn-ghost"
-                onClick={() => setShowNewDim(!showNewDim)}
+                onClick={() => {
+                  setShowNewDim(!showNewDim)
+                  setShowDimEditor(false)
+                  setShowExclusionEditor(false)
+                }}
                 title="Neue Dimension"
               >
                 <Plus size={13} /> Neu
@@ -1101,6 +1260,90 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
             </div>
           )}
 
+          {/* Exclusion Editor */}
+          {showExclusionEditor && (
+            <div className="exclusion-editor">
+              <div className="exclusion-editor-title">
+                Assets & Kategorien ausschließen
+              </div>
+              <div className="exclusion-editor-grid">
+                {/* Categories Column */}
+                <div className="exclusion-column">
+                  <div className="exclusion-column-title">Kategorien ausschließen</div>
+                  <div className="exclusion-list">
+                    {ALL_CATEGORIES.map((cat) => {
+                      const isExcluded = excludedCategories.has(cat)
+                      return (
+                        <label key={cat} className="exclusion-item">
+                          <input
+                            type="checkbox"
+                            checked={isExcluded}
+                            onChange={() => handleToggleCategoryExclusion(cat)}
+                          />
+                          <span className="exclusion-color-dot" style={{ background: CATEGORY_COLORS[cat] }} />
+                          <span className="exclusion-name">{cat}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Individual Assets Column */}
+                <div className="exclusion-column">
+                  <div className="exclusion-column-title">Einzelne Assets ausschließen</div>
+                  <input
+                    type="text"
+                    className="exclusion-search"
+                    placeholder="Asset suchen (Name oder ISIN)..."
+                    value={exclusionAssetSearch}
+                    onChange={(e) => setExclusionAssetSearch(e.target.value)}
+                  />
+                  <div className="exclusion-list asset-list">
+                    {displayInvestments
+                      .filter((inv) => inv.currentValue > 0)
+                      .filter((inv) => {
+                        if (!exclusionAssetSearch.trim()) return true
+                        const term = exclusionAssetSearch.toLowerCase()
+                        return (
+                          inv.name.toLowerCase().includes(term) ||
+                          inv.isin.toLowerCase().includes(term)
+                        )
+                      })
+                      .map((inv) => {
+                        const key = investmentKey(inv)
+                        const isCatExcluded = excludedCategories.has(inv.category)
+                        const isAssetExcluded = excludedAssetKeys.has(key)
+                        return (
+                          <label
+                            key={key}
+                            className={`exclusion-item ${isCatExcluded ? 'disabled-item' : ''}`}
+                            title={isCatExcluded ? `Ausgeschlossen über Kategorie "${inv.category}"` : undefined}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isCatExcluded || isAssetExcluded}
+                              disabled={isCatExcluded}
+                              onChange={() => handleToggleAssetExclusion(key)}
+                            />
+                            <span className="exclusion-name" style={{ flex: 1 }}>{inv.name}</span>
+                            <span className="exclusion-meta">{inv.category} · {fmtEur(inv.currentValue)}</span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                </div>
+              </div>
+              
+              {(excludedAssetKeys.size > 0 || excludedCategories.size > 0) && (
+                <div className="exclusion-editor-footer">
+                  <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleResetExclusions}>
+                    Alle Filter zurücksetzen
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Dimension allocation content */}
           {activeDimension && dimAllocation.length > 0 && (
             <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24, alignItems: 'center' }}>
@@ -1179,12 +1422,42 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
 
       {/* Holdings Table grouped by category */}
       <div className="card holdings-section">
-        <div className="card-title" style={{ marginBottom: 20, justifyContent: 'space-between' }}>
-          Holdings by Category
-          <button className="btn btn-sm btn-gold" onClick={() => setAddAssetOpen(!addAssetOpen)}>
-            <Plus size={13} />
-            Add Asset
-          </button>
+        <div className="card-title" style={{ marginBottom: 20, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <div>Holdings by Category</div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {selectedAssets.size > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600 }}>{selectedAssets.size} selected</span>
+                <select
+                  className="cat-select"
+                  onChange={(e) => handleBulkSetDepository(e.target.value)}
+                  value=""
+                  style={{ minWidth: '160px', border: 'none', background: 'transparent' }}
+                >
+                  <option value="" disabled>Assign Lagerstätte...</option>
+                  {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
+                  <option value="none">-- Remove --</option>
+                </select>
+                <button className="btn btn-sm btn-ghost" style={{ padding: '4px' }} onClick={() => setShowDepoEditor(true)} title="Lagerstätten verwalten">
+                  <Settings size={13} />
+                </button>
+              </div>
+            )}
+            <button className="btn btn-sm btn-ghost" onClick={() => generatePDF(displayInvestments, depositories)} title="PDF Report generieren">
+              <FileText size={13} /> PDF Report
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => generateMobileRebalancePDF(displayInvestments, allocation, activeSubWeights, goldOzPrice, SILVER_OZ_PRICE_EUR)}
+              title="Smartphone Rebalancing PDF herunterladen"
+            >
+              <Smartphone size={13} /> Mobile Rebalancing
+            </button>
+            <button className="btn btn-sm btn-gold" onClick={() => setAddAssetOpen(!addAssetOpen)}>
+              <Plus size={13} />
+              Add Asset
+            </button>
+          </div>
         </div>
 
         {addAssetOpen && (
@@ -1253,9 +1526,50 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
           </div>
         )}
 
+        {showDepoEditor && (
+          <div className="add-asset-form" style={{ marginTop: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ fontWeight: 600 }}>Lagerstätten verwalten</div>
+              <button className="btn btn-sm btn-ghost" onClick={() => setShowDepoEditor(false)}>
+                <X size={14} /> Schließen
+              </button>
+            </div>
+            
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: 16 }}>
+              {depositoryList.map(d => (
+                <div key={d} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                  <span>{d}</span>
+                  <button className="btn btn-ghost" style={{ padding: 2, height: 'auto' }} onClick={() => handleDeleteDepository(d)}>
+                    <Trash2 size={12} color="var(--red)" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="Neue Lagerstätte..."
+                value={newDepoName}
+                onChange={(e) => setNewDepoName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddDepository() }}
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-gold" onClick={handleAddDepository} disabled={!newDepoName.trim()}>
+                Hinzufügen
+              </button>
+            </div>
+          </div>
+        )}
+
+
+
         {ALL_CATEGORIES.map((cat) => {
           const items = grouped[cat]
           const catValue = items.reduce((s, inv) => s + inv.currentValue, 0)
+          const catCost = items.reduce((s, inv) => s + (inv.purchasePrice * inv.quantity), 0)
+          const catGain = catValue - catCost
+          const catGainPct = catCost > 0 ? catGain / catCost : 0
           const catPct = totalValue > 0 ? catValue / totalValue : 0
           const isOpen = !collapsed[cat]
 
@@ -1273,6 +1587,11 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
               <div className="category-header" onClick={() => toggleCollapse(cat)}>
                 <span className="category-dot" style={{ background: CATEGORY_COLORS[cat] }} />
                 <span className="category-header-name">{cat}</span>
+                {catCost > 0 && (
+                  <span className={`category-header-gain ${catGain >= 0 ? 'positive' : 'negative'}`} style={{ color: catGain >= 0 ? 'var(--green)' : 'var(--red)', fontSize: '0.8rem', minWidth: '80px', textAlign: 'right', fontWeight: 600 }}>
+                    {catGain >= 0 ? '+' : ''}{(catGainPct * 100).toFixed(1)}%
+                  </span>
+                )}
                 <span className="category-header-value">{fmtEur(catValue)}</span>
                 <span className="category-header-pct">{fmtPct(catPct)}</span>
                 {isOpen
@@ -1285,6 +1604,9 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                   {subKeys.map((sub) => {
                     const subItems = subGrouped.get(sub)!
                     const subValue = subItems.reduce((s, inv) => s + inv.currentValue, 0)
+                    const subCost = subItems.reduce((s, inv) => s + (inv.purchasePrice * inv.quantity), 0)
+                    const subGain = subValue - subCost
+                    const subGainPct = subCost > 0 ? subGain / subCost : 0
                     const subPct = catValue > 0 ? subValue / catValue : 0
                     const subCollapseKey = `${cat}::${sub}`
                     const subOpen = !collapsed[subCollapseKey]
@@ -1298,6 +1620,11 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                           <span className="sub-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
                           <span className="subcategory-header-name">{sub}</span>
                           <span className="subcategory-header-count">{subItems.length}</span>
+                          {subCost > 0 && (
+                            <span className={`subcategory-header-gain ${subGain >= 0 ? 'positive' : 'negative'}`} style={{ color: subGain >= 0 ? 'var(--green)' : 'var(--red)', fontSize: '0.78rem', minWidth: '70px', textAlign: 'right', fontWeight: 600 }}>
+                              {subGain >= 0 ? '+' : ''}{(subGainPct * 100).toFixed(1)}%
+                            </span>
+                          )}
                           <span className="subcategory-header-value">{fmtEur(subValue)}</span>
                           <span className="subcategory-header-pct">{(subPct * 100).toFixed(0)}%</span>
                           {subOpen
@@ -1307,20 +1634,74 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
 
                         {subOpen && (
                           <div style={{ overflowX: 'auto' }}>
+                            {(cat === 'Safe-Haven Gold' || sub === 'Silber') && (
+                              (() => {
+                                const coinCounts: Record<string, number> = {};
+                                let hasCoins = false;
+                                subItems.forEach((inv) => {
+                                  const match = inv.name.match(/\b(1\/[248]|1\/10|1\/20|\d+(?:[.,]\d+)?)\s*(oz|unze|ounce)\b/i);
+                                  if (match) {
+                                    let size = match[1].replace(',', '.') + ' oz';
+                                    coinCounts[size] = (coinCounts[size] || 0) + (inv.quantity || 1);
+                                    hasCoins = true;
+                                  }
+                                });
+                                
+                                if (!hasCoins) return null;
+                                
+                                const isSilver = sub === 'Silber';
+                                return (
+                                  <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', background: 'var(--bg-surface)', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', marginRight: '8px', letterSpacing: '0.05em' }}>
+                                      MÜNZEN:
+                                    </div>
+                                    {Object.entries(coinCounts).sort((a, b) => {
+                                      // Custom sort to ensure fractions sort logically, e.g., 1 oz > 1/2 oz > 1/4 oz
+                                      const valA = eval(a[0].replace(' oz', '')) || 0;
+                                      const valB = eval(b[0].replace(' oz', '')) || 0;
+                                      return valB - valA;
+                                    }).map(([size, count]) => (
+                                      <div key={size} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: '12px', gap: '6px', fontSize: '0.8rem', border: '1px solid var(--border)' }}>
+                                        <Coins size={14} color={isSilver ? "var(--text-secondary)" : "var(--cat-gold-safe)"} />
+                                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{Math.round(count)}x</span>
+                                        <span style={{ color: 'var(--text-secondary)' }}>{size}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()
+                            )}
                             <table className="holdings-table sub-table">
                               <thead>
                                 <tr>
+                                  <th style={{ width: 28, textAlign: 'center' }}>
+                                    <input 
+                                      type="checkbox" 
+                                      onChange={(e) => {
+                                        const newSet = new Set(selectedAssets)
+                                        const allKeys = subItems.map(inv => investmentKey(inv))
+                                        if (e.target.checked) {
+                                          allKeys.forEach(k => newSet.add(k))
+                                        } else {
+                                          allKeys.forEach(k => newSet.delete(k))
+                                        }
+                                        setSelectedAssets(newSet)
+                                      }}
+                                      checked={subItems.length > 0 && subItems.every(inv => selectedAssets.has(investmentKey(inv)))}
+                                    />
+                                  </th>
                                   <th>Name</th>
                                   <th>Type</th>
                                   <th style={{ textAlign: 'right' }}>Value €</th>
                                   <th style={{ textAlign: 'right' }}>G/L</th>
+                                  <th>Lagerstätte</th>
                                   <th>Broker</th>
                                   {activeDimension && (
                                     <th title={activeDimension.name}>{activeDimension.name.slice(0, 10)}</th>
                                   )}
                                   <th>Subcategory</th>
                                   <th>Category</th>
-                                  <th style={{ width: 36 }}></th>
+                                  <th style={{ width: 60 }}></th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1328,8 +1709,25 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                   const cost = inv.purchasePrice * inv.quantity
                                   const gain = inv.currentValue - cost
                                   const gainPct = cost > 0 ? gain / cost : 0
+                                  const key = investmentKey(inv)
+                                  const isCatExcluded = excludedCategories.has(inv.category)
+                                  const isAssetExcludedExplicitly = excludedAssetKeys.has(key)
+                                  const isExcluded = isCatExcluded || isAssetExcludedExplicitly
+                                  const isRowDimmed = activeTab === 'dimensions' && isExcluded
                                   return (
-                                    <tr key={inv.isin + inv.name}>
+                                    <tr key={inv.isin + inv.name} className={isRowDimmed ? 'dimmed-row' : undefined}>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <input 
+                                          type="checkbox" 
+                                          checked={selectedAssets.has(key)}
+                                          onChange={(e) => {
+                                            const newSet = new Set(selectedAssets)
+                                            if (e.target.checked) newSet.add(key)
+                                            else newSet.delete(key)
+                                            setSelectedAssets(newSet)
+                                          }}
+                                        />
+                                      </td>
                                       <td className="name-cell" title={inv.name}>{inv.name}</td>
                                       <td>{inv.type}</td>
                                       <td className="num">{fmt(inv.currentValue)}</td>
@@ -1337,10 +1735,19 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                         {gain >= 0 ? '+' : ''}{(gainPct * 100).toFixed(1)} %
                                       </td>
                                       <td>
+                                        <select
+                                          className="cat-select sub-select"
+                                          value={depositories[key] || ''}
+                                          onChange={(e) => handleSetDepository(key, e.target.value)}
+                                        >
+                                          <option value="">—</option>
+                                          {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
+                                        </select>
+                                      </td>
+                                      <td>
                                         <div className="broker-badges">
                                           {ALL_BROKERS.map((broker) => {
-                                            const assetKey = investmentKey(inv)
-                                            const status: AvailabilityStatus = brokerAvailMap.get(assetKey)?.[broker] ?? 'unavailable'
+                                            const status: AvailabilityStatus = brokerAvailMap.get(key)?.[broker] ?? 'unavailable'
                                             const isOn = status === 'available' || status === 'override-on'
                                             const isOverride = status === 'override-on' || status === 'override-off'
                                             const title = `${broker}: ${status === 'available' ? 'Verfügbar (auto)' : status === 'unavailable' ? 'Nicht verfügbar (auto)' : status === 'override-on' ? 'Manuell: Verfügbar ✓' : 'Manuell: Nicht verfügbar ✗'}\nKlick zum Umschalten`
@@ -1356,7 +1763,7 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                                 title={title}
                                                 onClick={(e) => {
                                                   e.stopPropagation()
-                                                  handleCycleBroker(assetKey, broker)
+                                                  handleCycleBroker(key, broker)
                                                 }}
                                               >
                                                 {BROKER_SHORT[broker]}
@@ -1367,18 +1774,42 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                       </td>
                                       {activeDimension && (
                                         <td>
-                                          <select
-                                            className="cat-select dim-tag-select"
-                                            value={dimTagMap.get(investmentKey(inv)) || ''}
-                                            onChange={(e) => {
-                                              handleSetDimTag(investmentKey(inv), activeDimension.id, e.target.value)
-                                            }}
-                                          >
-                                            <option value="">—</option>
-                                            {activeDimension.tags.map((tag) => (
-                                              <option key={tag} value={tag}>{tag}</option>
-                                            ))}
-                                          </select>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <select
+                                              className="cat-select dim-tag-select"
+                                              value={dimTagMap.get(key) || ''}
+                                              onChange={(e) => {
+                                                handleSetDimTag(key, activeDimension.id, e.target.value)
+                                              }}
+                                              style={{ flex: 1 }}
+                                            >
+                                              <option value="">—</option>
+                                              {activeDimension.tags.map((tag) => (
+                                                <option key={tag} value={tag}>{tag}</option>
+                                              ))}
+                                            </select>
+                                            <button
+                                              className="btn btn-sm btn-ghost"
+                                              style={{ padding: 4, height: 26, width: 26, minWidth: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                              disabled={isCatExcluded}
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                handleToggleAssetExclusion(key)
+                                              }}
+                                              title={isCatExcluded 
+                                                ? `Ausgeschlossen über Kategorie "${inv.category}"` 
+                                                : isAssetExcludedExplicitly 
+                                                  ? "Asset wieder einschließen" 
+                                                  : "Asset ausschließen"
+                                              }
+                                            >
+                                              {isExcluded ? (
+                                                <EyeOff size={12} color={isCatExcluded ? "var(--text-muted)" : "var(--red)"} />
+                                              ) : (
+                                                <Eye size={12} />
+                                              )}
+                                            </button>
+                                          </div>
                                         </td>
                                       )}
                                       <td>
@@ -1417,16 +1848,39 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
                                         </div>
                                       </td>
                                       <td>
-                                        <button
-                                          className="btn-icon-sm btn-delete-asset"
-                                          title="Remove asset"
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            onDeleteAsset?.(investmentKey(inv))
-                                          }}
-                                        >
-                                          <Trash2 size={13} />
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', alignItems: 'center' }}>
+                                          {(inv.category === 'Safe-Haven Gold' || (inv.category === 'Performance Gold' && inv.subcategory === 'Silber' && inv.type !== 'Aktien')) && (
+                                            <button
+                                              className="btn-icon-sm"
+                                              title="Münz-Stückelung"
+                                              style={{ display: 'inline-flex', padding: 4, background: 'transparent', border: 'none', cursor: 'pointer' }}
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                openSplitModal(inv)
+                                              }}
+                                            >
+                                              <Layers
+                                                size={13}
+                                                style={{
+                                                  color: (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver') || inv.subcategory === 'Silber')
+                                                    ? 'var(--text-secondary)'
+                                                    : 'var(--gold)'
+                                                }}
+                                              />
+                                            </button>
+                                          )}
+                                          <button
+                                            className="btn-icon-sm btn-delete-asset"
+                                            title="Remove asset"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              onDeleteAsset?.(investmentKey(inv))
+                                            }}
+                                            style={{ display: 'inline-flex', padding: 4, background: 'transparent', border: 'none', cursor: 'pointer' }}
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </div>
                                       </td>
                                     </tr>
                                   )
@@ -1449,166 +1903,181 @@ export default function Dashboard({ investments, onCategoryChange, onReset, onRu
         })}
       </div>
 
-      {/* Learned Rules Panel */}
-      <div className="card rules-card">
-        <div
-          className="card-title rules-header"
-          onClick={() => setRulesOpen(!rulesOpen)}
-          style={{ cursor: 'pointer', userSelect: 'none' }}
-        >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <UserCheck size={16} />
-            Learned Rules
-            <span className="rules-count">{rules.length}</span>
-          </span>
-          {rulesOpen
-            ? <ChevronDown size={14} color="var(--text-muted)" />
-            : <ChevronRight size={14} color="var(--text-muted)" />}
-        </div>
-
-        {rulesOpen && (
-          <div className="rules-body">
-            {rules.length === 0 ? (
-              <div className="empty-state">No learned rules yet. Change a category in the table above to teach the system.</div>
-            ) : (
-              <>
-                <table className="holdings-table rules-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>ISIN</th>
-                      <th>Category</th>
-                      <th>Subcategory</th>
-                      <th style={{ width: 40 }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rules.map((r) => (
-                      <tr key={r.isin || r.name}>
-                        <td className="name-cell" title={r.name}>{r.name}</td>
-                        <td style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '0.78rem' }}>{r.isin || '—'}</td>
-                        <td>
-                          <span className="rule-cat-badge" style={{ background: CATEGORY_COLORS[r.category] + '22', color: CATEGORY_COLORS[r.category] }}>
-                            {r.category}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="sub-tag">{r.subcategory || '—'}</span>
-                        </td>
-                        <td>
-                          <button
-                            className="btn-icon-sm"
-                            title="Delete rule"
-                            onClick={() => handleDeleteRule(r.isin || r.name)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="rules-actions">
-                  <div className="rules-actions-left">
-                    <button className="btn btn-sm btn-ghost" onClick={exportRulesToJSON}>
-                      <Download size={13} /> Export
-                    </button>
-                    <label className="btn btn-sm btn-ghost" style={{ cursor: 'pointer' }}>
-                      <Upload size={13} /> Import
-                      <input
-                        type="file"
-                        accept=".json"
-                        style={{ display: 'none' }}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0]
-                          if (f) handleImportRules(f)
-                          e.target.value = ''
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleClearRules}>
-                    <XCircle size={13} style={{ marginRight: 4 }} />
-                    Clear all
-                  </button>
-                </div>
-                {importMsg && (
-                  <div className="import-msg">{importMsg}</div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Broker Overrides Panel */}
-      {getBrokerOverrideCount() > 0 && (
-        <div className="card rules-card" style={{ marginTop: 12 }}>
-          <div className="card-title" style={{ fontSize: '0.85rem' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Coins size={14} />
-              Broker Overrides
-              <span className="rules-count">{getBrokerOverrideCount()}</span>
-            </span>
-          </div>
-          <div className="rules-actions" style={{ marginTop: 8 }}>
-            <div className="rules-actions-left">
-              <button className="btn btn-sm btn-ghost" onClick={exportBrokerOverrides}>
-                <Download size={13} /> Export
-              </button>
-              <label className="btn btn-sm btn-ghost" style={{ cursor: 'pointer' }}>
-                <Upload size={13} /> Import
-                <input
-                  type="file"
-                  accept=".json"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) handleImportBrokerOverrides(f)
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-            </div>
-            <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleClearBrokerOverrides}>
-              <XCircle size={13} style={{ marginRight: 4 }} />
-              Clear all
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <button className="btn btn-ghost" onClick={exportWorkspace}>
-            Export Workspace
-          </button>
-          <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
-            Import Workspace
-            <input
-              type="file"
-              accept=".json"
-              style={{ display: 'none' }}
-              onChange={async (e) => {
-                const file = e.target.files?.[0]
-                if (!file) return
-                try {
-                  await importWorkspace(file)
-                  // Force reload to apply all local storage values properly
-                  window.location.reload()
-                } catch (err) {
-                  setImportMsg(String(err))
-                  setTimeout(() => setImportMsg(null), 4000)
-                }
-                e.target.value = ''
-              }}
-            />
-          </label>
-        </div>
-        <button className="btn btn-ghost" onClick={onReset}>
-          Upload new CSV
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: 24, marginBottom: 12 }}>
+        <button className="btn btn-gold" onClick={() => setDataModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 24px', fontSize: '0.95rem', fontWeight: 600 }}>
+          <Database size={18} /> Daten Ex- & Import
         </button>
       </div>
+
+      {splitModalAsset && splitConfig && createPortal(
+        <div className="modal-backdrop" onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            handleCloseSplitModal()
+          }
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Coins
+                  size={20}
+                  color={(splitModalAsset.name.toLowerCase().includes('silber') || splitModalAsset.name.toLowerCase().includes('silver') || splitModalAsset.subcategory === 'Silber')
+                    ? 'var(--text-secondary)'
+                    : 'var(--gold)'
+                  }
+                />
+                <span>Münz-Stückelung: {splitModalAsset.name}</span>
+              </div>
+              <button className="btn btn-sm btn-ghost" style={{ padding: '6px' }} onClick={handleCloseSplitModal}>
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '12px', marginBottom: 20, alignItems: 'center', background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+               <label style={{ fontSize: '0.88rem', fontWeight: 600 }}>Gesamtmenge in Unzen:</label>
+               <input 
+                  type="number" 
+                  step="0.01" 
+                  value={splitConfig.totalOunces} 
+                  onChange={e => setSplitConfigState({...splitConfig, totalOunces: parseFloat(e.target.value) || 0})}
+                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right' }}
+               />
+               <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                 Gesamtwert dieses Assets: <strong style={{ color: 'var(--green)' }}>€ {splitModalAsset.currentValue.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
+               </span>
+            </div>
+
+            <div style={{ maxHeight: '40vh', overflowY: 'auto', marginBottom: 20, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+              <table className="holdings-table" style={{ margin: 0 }}>
+                 <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)' }}>
+                    <tr>
+                       <th style={{ width: '220px', padding: '10px 14px' }}>Name der Münze</th>
+                       <th style={{ width: '110px', padding: '10px 14px' }}>Einheit (z.B. 1 oz)</th>
+                       <th style={{ width: '90px', padding: '10px 14px' }}>Anzahl</th>
+                       <th style={{ padding: '10px 14px' }}>Lagerstätte</th>
+                       <th style={{ width: '50px', padding: '10px 14px', textAlign: 'center' }}></th>
+                    </tr>
+                 </thead>
+                 <tbody>
+                    {splitConfig.splits.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                          Keine Münzen definiert. Klicke unten auf "Münze hinzufügen".
+                        </td>
+                      </tr>
+                    ) : (
+                      splitConfig.splits.map((s, i) => (
+                        <tr key={s.id}>
+                           <td style={{ padding: '8px 12px' }}>
+                              <input type="text" value={s.name} onChange={e => {
+                                 const newSplits = [...splitConfig.splits]
+                                 newSplits[i].name = e.target.value
+                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              }} onKeyDown={e => {
+                                 if (e.key === ' ') e.stopPropagation()
+                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                           </td>
+                           <td style={{ padding: '8px 12px' }}>
+                              <input type="text" value={s.denomination} onChange={e => {
+                                 const newSplits = [...splitConfig.splits]
+                                 newSplits[i].denomination = e.target.value
+                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              }} onKeyDown={e => {
+                                 if (e.key === ' ') e.stopPropagation()
+                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                           </td>
+                           <td style={{ padding: '8px 12px' }}>
+                              <input type="number" value={s.coinCount} onChange={e => {
+                                 const newSplits = [...splitConfig.splits]
+                                 newSplits[i].coinCount = parseFloat(e.target.value) || 0
+                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)', textAlign: 'right' }} />
+                           </td>
+                           <td style={{ padding: '8px 12px' }}>
+                              <select value={s.depository} onChange={e => {
+                                 const newSplits = [...splitConfig.splits]
+                                 newSplits[i].depository = e.target.value
+                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              }} className="cat-select sub-select" style={{ width: '100%', padding: '6px 8px', height: 'auto', background: 'var(--bg-input)' }}>
+                                 <option value="">—</option>
+                                 {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                           </td>
+                           <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                              <button className="btn btn-ghost" onClick={() => {
+                                 const newSplits = splitConfig.splits.filter((_, idx) => idx !== i)
+                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              }} style={{ padding: 4, display: 'inline-flex', justifyContent: 'center', alignItems: 'center' }}>
+                                 <Trash2 size={14} color="var(--red)" />
+                              </button>
+                           </td>
+                        </tr>
+                      ))
+                    )}
+                 </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+               <button className="btn btn-sm btn-ghost" onClick={() => {
+                  setSplitConfigState({
+                     ...splitConfig,
+                     splits: [...splitConfig.splits, {
+                        id: Math.random().toString(36).substring(2, 9),
+                        name: (splitModalAsset.name.toLowerCase().includes('silber') || splitModalAsset.name.toLowerCase().includes('silver') || splitModalAsset.subcategory === 'Silber')
+                          ? 'Philharmoniker Silber'
+                          : 'Philharmoniker',
+                        denomination: '1 oz',
+                        coinCount: 1,
+                        depository: ''
+                     }]
+                  })
+               }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px' }}>
+                  <Plus size={14} /> Münze hinzufügen
+               </button>
+
+               <div style={{ display: 'flex', gap: '10px' }}>
+                  {splitConfig.splits.length > 0 && (
+                     <button className="btn btn-sm btn-ghost" onClick={() => {
+                        if (window.confirm('Möchtest du die Münzstückelung wirklich aufheben?')) {
+                           deleteSplitConfig(splitConfig.assetKey)
+                           setSplitModalAsset(null)
+                           setOriginalSplitConfig(null)
+                           setSplitVersion(v => v + 1)
+                        }
+                     }} style={{ color: 'var(--red)', padding: '8px 14px' }}>
+                        Split aufheben
+                     </button>
+                  )}
+                  <button className="btn btn-sm btn-ghost" onClick={handleCloseSplitModal} style={{ padding: '8px 14px' }}>
+                     Abbrechen
+                  </button>
+                  <button className="btn btn-sm btn-gold" onClick={handleSaveSplit} style={{ padding: '8px 18px', fontWeight: 600 }}>
+                     Speichern
+                  </button>
+               </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      <DataManagementModal
+        isOpen={dataModalOpen}
+        onClose={() => setDataModalOpen(false)}
+        onExportWorkspace={exportWorkspace}
+        onImportWorkspace={async (file: File) => {
+          await importWorkspace(file)
+          window.location.reload()
+        }}
+        onExportProfiles={handleExportProfiles}
+        onImportProfiles={handleImportProfiles}
+        onExportDimension={handleExportDimension}
+        onImportDimension={handleImportDimension}
+        onExportRules={exportRulesToJSON}
+        onImportRules={handleImportRules}
+        onExportOverrides={exportBrokerOverrides}
+        onImportOverrides={handleImportBrokerOverrides}
+      />
     </div>
   )
 }

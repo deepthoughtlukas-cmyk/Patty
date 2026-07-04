@@ -3,6 +3,8 @@ import type { UserRule } from './userRules'
 import type { TargetProfile } from './targetProfiles'
 import type { BrokerOverride } from './brokerAvailability'
 import type { Dimension, DimensionTagEntry } from './dimensions'
+import type { DepositoryMap } from './depositories'
+import type { AssetSplitConfig } from './assetSplits'
 
 export interface WorkspaceExport {
   version: 1
@@ -14,6 +16,11 @@ export interface WorkspaceExport {
   brokerOverrides: BrokerOverride[]
   dimensions?: Dimension[]
   dimensionTags?: DimensionTagEntry[]
+  depositories?: DepositoryMap
+  depositoryList?: string[]
+  splits?: AssetSplitConfig[]
+  excludedAssetKeys?: string[]
+  excludedCategories?: string[]
 }
 
 const KEYS = {
@@ -24,6 +31,11 @@ const KEYS = {
   BROKER_OVERRIDES: 'patty-broker-overrides',
   DIMENSIONS: 'patty-dimensions',
   DIMENSION_TAGS: 'patty-dimension-tags',
+  DEPOSITORIES: 'patty-depositories',
+  DEPOSITORY_LIST: 'patty-depository-list',
+  ASSET_SPLITS: 'patty-asset-splits',
+  EXCLUDED_ASSET_KEYS: 'patty-dim-excluded-assets',
+  EXCLUDED_CATEGORIES: 'patty-dim-excluded-categories',
 }
 
 function getJSON<T>(key: string, parseFallback: any = null): T | null {
@@ -46,6 +58,11 @@ export function exportWorkspace(): void {
     brokerOverrides: getJSON<BrokerOverride[]>(KEYS.BROKER_OVERRIDES, []),
     dimensions: getJSON<Dimension[]>(KEYS.DIMENSIONS, []),
     dimensionTags: getJSON<DimensionTagEntry[]>(KEYS.DIMENSION_TAGS, []),
+    depositories: getJSON<DepositoryMap>(KEYS.DEPOSITORIES, {}),
+    depositoryList: getJSON<string[]>(KEYS.DEPOSITORY_LIST, []),
+    splits: getJSON<AssetSplitConfig[]>(KEYS.ASSET_SPLITS, []),
+    excludedAssetKeys: getJSON<string[]>(KEYS.EXCLUDED_ASSET_KEYS, []),
+    excludedCategories: getJSON<string[]>(KEYS.EXCLUDED_CATEGORIES, []),
   }
 
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -101,6 +118,26 @@ export function importWorkspace(file: File): Promise<void> {
 
         if (data.dimensionTags) {
           localStorage.setItem(KEYS.DIMENSION_TAGS, JSON.stringify(data.dimensionTags))
+        }
+
+        if (data.depositories) {
+          localStorage.setItem(KEYS.DEPOSITORIES, JSON.stringify(data.depositories))
+        }
+
+        if (data.depositoryList) {
+          localStorage.setItem(KEYS.DEPOSITORY_LIST, JSON.stringify(data.depositoryList))
+        }
+
+        if (data.splits) {
+          localStorage.setItem(KEYS.ASSET_SPLITS, JSON.stringify(data.splits))
+        }
+
+        if (data.excludedAssetKeys) {
+          localStorage.setItem(KEYS.EXCLUDED_ASSET_KEYS, JSON.stringify(data.excludedAssetKeys))
+        }
+
+        if (data.excludedCategories) {
+          localStorage.setItem(KEYS.EXCLUDED_CATEGORIES, JSON.stringify(data.excludedCategories))
         }
 
         resolve()
