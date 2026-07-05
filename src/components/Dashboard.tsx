@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   PieChart,
@@ -96,7 +96,18 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
 }
 
 export default function Dashboard({ investments, onCategoryChange, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('patty-collapsed-states')
+      return raw ? JSON.parse(raw) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  useEffect(() => {
+    localStorage.setItem('patty-collapsed-states', JSON.stringify(collapsed))
+  }, [collapsed])
 
   // Split state
   const [splitVersion, setSplitVersion] = useState(0)
@@ -613,6 +624,23 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
 
   const toggleCollapse = (cat: string) =>
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }))
+
+  const handleExpandAll = () => {
+    setCollapsed({})
+  }
+
+  const handleCollapseAll = () => {
+    const newCollapsed: Record<string, boolean> = {}
+    ALL_CATEGORIES.forEach((cat) => {
+      newCollapsed[cat] = true
+      const items = activeInvestments.filter((inv) => inv.category === cat)
+      const subKeys = Array.from(new Set(items.map((inv) => inv.subcategory)))
+      subKeys.forEach((sub) => {
+        newCollapsed[`${cat}::${sub}`] = true
+      })
+    })
+    setCollapsed(newCollapsed)
+  }
 
   // Get subcategory options for a given category
   const getSubcategories = (cat: AssetCategory): string[] => {
@@ -1423,7 +1451,27 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
       {/* Holdings Table grouped by category */}
       <div className="card holdings-section">
         <div className="card-title" style={{ marginBottom: 20, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-          <div>Holdings by Category</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+            <span>Holdings by Category</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={handleExpandAll}
+                style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                title="Alle Kategorien und Unterkategorien aufklappen"
+              >
+                Alles aufklappen
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={handleCollapseAll}
+                style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                title="Alle Kategorien und Unterkategorien einklappen"
+              >
+                Alles einklappen
+              </button>
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {selectedAssets.size > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)' }}>

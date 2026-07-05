@@ -21,6 +21,7 @@ export interface WorkspaceExport {
   splits?: AssetSplitConfig[]
   excludedAssetKeys?: string[]
   excludedCategories?: string[]
+  collapsedStates?: Record<string, boolean>
 }
 
 const KEYS = {
@@ -36,6 +37,7 @@ const KEYS = {
   ASSET_SPLITS: 'patty-asset-splits',
   EXCLUDED_ASSET_KEYS: 'patty-dim-excluded-assets',
   EXCLUDED_CATEGORIES: 'patty-dim-excluded-categories',
+  COLLAPSED_STATES: 'patty-collapsed-states',
 }
 
 function getJSON<T>(key: string, parseFallback: any = null): T | null {
@@ -63,6 +65,7 @@ export function exportWorkspace(): void {
     splits: getJSON<AssetSplitConfig[]>(KEYS.ASSET_SPLITS, []),
     excludedAssetKeys: getJSON<string[]>(KEYS.EXCLUDED_ASSET_KEYS, []),
     excludedCategories: getJSON<string[]>(KEYS.EXCLUDED_CATEGORIES, []),
+    collapsedStates: getJSON<Record<string, boolean>>(KEYS.COLLAPSED_STATES, {}),
   }
 
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -138,6 +141,10 @@ export function importWorkspace(file: File): Promise<void> {
 
         if (data.excludedCategories) {
           localStorage.setItem(KEYS.EXCLUDED_CATEGORIES, JSON.stringify(data.excludedCategories))
+        }
+
+        if (data.collapsedStates) {
+          localStorage.setItem(KEYS.COLLAPSED_STATES, JSON.stringify(data.collapsedStates))
         }
 
         resolve()
