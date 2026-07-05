@@ -29,6 +29,7 @@ import {
   buildDimensionTagMap,
   runAutoTagging,
   setDimensionTag,
+  removeDimensionTag,
   getTagColor,
   exportDimension,
   importDimension,
@@ -332,6 +333,14 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
     setSelectedAssets(new Set())
   }
 
+  const handleBulkSetCategory = (category: AssetCategory) => {
+    if (selectedAssets.size === 0) return
+    Array.from(selectedAssets).forEach((key) => {
+      onCategoryChange(key, category)
+    })
+    setSelectedAssets(new Set())
+  }
+
   // Run auto-tagging when investments change
   const autoTagRan = useRef(false)
   if (displayInvestments.length > 0 && !autoTagRan.current) {
@@ -363,6 +372,19 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
   const handleSetDimTag = (assetKey: string, dimId: string, tag: string) => {
     setDimensionTag(dimId, assetKey, tag, false)
     setDimVersion((v) => v + 1)
+  }
+
+  const handleBulkSetDimTag = (tag: string) => {
+    if (selectedAssets.size === 0 || !activeDimension) return
+    Array.from(selectedAssets).forEach((key) => {
+      if (tag === 'none') {
+        removeDimensionTag(activeDimension.id, key)
+      } else {
+        setDimensionTag(activeDimension.id, key, tag, false)
+      }
+    })
+    setDimVersion((v) => v + 1)
+    setSelectedAssets(new Set())
   }
 
   const handleCreateDimension = () => {
@@ -1555,21 +1577,51 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {selectedAssets.size > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600 }}>{selectedAssets.size} selected</span>
+                
+                {/* Bulk Lagerstätte */}
                 <select
                   className="cat-select"
                   onChange={(e) => handleBulkSetDepository(e.target.value)}
                   value=""
-                  style={{ minWidth: '160px', border: 'none', background: 'transparent' }}
+                  style={{ minWidth: '140px', border: 'none', background: 'transparent' }}
+                  title="Lagerstätte für markierte Assets setzen"
                 >
-                  <option value="" disabled>Assign Lagerstätte...</option>
+                  <option value="" disabled>Lagerstätte...</option>
                   {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
-                  <option value="none">-- Remove --</option>
+                  <option value="none">-- Entfernen --</option>
                 </select>
-                <button className="btn btn-sm btn-ghost" style={{ padding: '4px' }} onClick={() => setShowDepoEditor(true)} title="Lagerstätten verwalten">
+                <button className="btn btn-sm btn-ghost" style={{ padding: '4px', marginRight: '4px' }} onClick={() => setShowDepoEditor(true)} title="Lagerstätten verwalten">
                   <Settings size={13} />
                 </button>
+
+                {/* Bulk Active Dimension Tag */}
+                {activeDimension && (
+                  <select
+                    className="cat-select"
+                    onChange={(e) => handleBulkSetDimTag(e.target.value)}
+                    value=""
+                    style={{ minWidth: '140px', border: 'none', background: 'transparent', borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}
+                    title={`${activeDimension.name} für markierte Assets setzen`}
+                  >
+                    <option value="" disabled>{activeDimension.name}...</option>
+                    {activeDimension.tags.map(t => <option key={t} value={t}>{t}</option>)}
+                    <option value="none">-- Tag entfernen --</option>
+                  </select>
+                )}
+
+                {/* Bulk Category */}
+                <select
+                  className="cat-select"
+                  onChange={(e) => handleBulkSetCategory(e.target.value as AssetCategory)}
+                  value=""
+                  style={{ minWidth: '130px', border: 'none', background: 'transparent', borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}
+                  title="Kategorie für markierte Assets setzen"
+                >
+                  <option value="" disabled>Kategorie...</option>
+                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
             )}
             <button className="btn btn-sm btn-ghost" onClick={() => generatePDF(displayInvestments, depositories)} title="PDF Report generieren">
