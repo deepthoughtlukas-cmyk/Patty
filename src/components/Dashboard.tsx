@@ -220,6 +220,7 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
 
   // Depositories state
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set())
+  const [bulkActionField, setBulkActionField] = useState<string>('depository')
   const [depositories, setDepositoriesState] = useState(() => loadDepositories())
   const [depositoryList, setDepositoryList] = useState(() => loadDepositoryList())
   const [depoVersion, setDepoVersion] = useState(0)
@@ -1580,48 +1581,76 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600 }}>{selectedAssets.size} selected</span>
                 
-                {/* Bulk Lagerstätte */}
+                {/* 1. Dropdown: WAS soll zugeordnet werden? */}
                 <select
                   className="cat-select"
-                  onChange={(e) => handleBulkSetDepository(e.target.value)}
-                  value=""
-                  style={{ minWidth: '140px', border: 'none', background: 'transparent' }}
-                  title="Lagerstätte für markierte Assets setzen"
+                  value={bulkActionField}
+                  onChange={(e) => setBulkActionField(e.target.value)}
+                  style={{ minWidth: '150px', border: 'none', background: 'transparent', fontWeight: 600, color: 'var(--text-primary)' }}
+                  title="Wähle das Feld aus, das im Bulk zugewiesen werden soll"
                 >
-                  <option value="" disabled>Lagerstätte...</option>
-                  {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
-                  <option value="none">-- Entfernen --</option>
+                  <option value="depository">Feld: Lagerstätte</option>
+                  <option value="category">Feld: Kategorie</option>
+                  <optgroup label="Dimensionen (Tags)">
+                    {dimensions.map((d) => (
+                      <option key={d.id} value={`dim::${d.id}`}>Tag: {d.name}</option>
+                    ))}
+                  </optgroup>
                 </select>
-                <button className="btn btn-sm btn-ghost" style={{ padding: '4px', marginRight: '4px' }} onClick={() => setShowDepoEditor(true)} title="Lagerstätten verwalten">
-                  <Settings size={13} />
-                </button>
 
-                {/* Bulk Active Dimension Tag */}
-                {activeDimension && (
+                <span style={{ color: 'var(--border)' }}>|</span>
+
+                {/* 2. Dropdown: WELCHER WERT soll zugeordnet werden? */}
+                {bulkActionField === 'depository' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <select
+                      className="cat-select"
+                      onChange={(e) => handleBulkSetDepository(e.target.value)}
+                      value=""
+                      style={{ minWidth: '150px', border: 'none', background: 'transparent' }}
+                      title="Lagerstätte für markierte Assets setzen"
+                    >
+                      <option value="" disabled>Lagerstätte auswählen...</option>
+                      {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
+                      <option value="none">-- Entfernen --</option>
+                    </select>
+                    <button className="btn btn-sm btn-ghost" style={{ padding: '4px' }} onClick={() => setShowDepoEditor(true)} title="Lagerstätten verwalten">
+                      <Settings size={13} />
+                    </button>
+                  </div>
+                )}
+
+                {bulkActionField === 'category' && (
                   <select
                     className="cat-select"
-                    onChange={(e) => handleBulkSetDimTag(e.target.value)}
+                    onChange={(e) => handleBulkSetCategory(e.target.value as AssetCategory)}
                     value=""
-                    style={{ minWidth: '140px', border: 'none', background: 'transparent', borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}
-                    title={`${activeDimension.name} für markierte Assets setzen`}
+                    style={{ minWidth: '150px', border: 'none', background: 'transparent' }}
+                    title="Kategorie für markierte Assets setzen"
                   >
-                    <option value="" disabled>{activeDimension.name}...</option>
-                    {activeDimension.tags.map(t => <option key={t} value={t}>{t}</option>)}
-                    <option value="none">-- Tag entfernen --</option>
+                    <option value="" disabled>Kategorie auswählen...</option>
+                    {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 )}
 
-                {/* Bulk Category */}
-                <select
-                  className="cat-select"
-                  onChange={(e) => handleBulkSetCategory(e.target.value as AssetCategory)}
-                  value=""
-                  style={{ minWidth: '130px', border: 'none', background: 'transparent', borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}
-                  title="Kategorie für markierte Assets setzen"
-                >
-                  <option value="" disabled>Kategorie...</option>
-                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                {bulkActionField.startsWith('dim::') && (() => {
+                  const dimId = bulkActionField.replace('dim::', '')
+                  const targetDim = dimensions.find(d => d.id === dimId)
+                  if (!targetDim) return null
+                  return (
+                    <select
+                      className="cat-select"
+                      onChange={(e) => handleBulkSetDimTag(dimId, e.target.value)}
+                      value=""
+                      style={{ minWidth: '150px', border: 'none', background: 'transparent' }}
+                      title={`${targetDim.name} Tag für markierte Assets setzen`}
+                    >
+                      <option value="" disabled>{targetDim.name} auswählen...</option>
+                      {targetDim.tags.map(t => <option key={t} value={t}>{t}</option>)}
+                      <option value="none">-- Tag entfernen --</option>
+                    </select>
+                  )
+                })()}
               </div>
             )}
             <button className="btn btn-sm btn-ghost" onClick={() => generatePDF(displayInvestments, depositories)} title="PDF Report generieren">
