@@ -3,6 +3,7 @@
    =========================== */
 
 :root {
+  color-scheme: dark;
   --bg-base: #0d0f14;
   --bg-surface: #13161e;
   --bg-card: #1a1e2a;
@@ -508,8 +509,19 @@ body {
   border-color: var(--gold);
 }
 
-.cat-select option {
+.cat-select option,
+.cat-select optgroup,
+select option,
+select optgroup {
   background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.cat-select optgroup,
+select optgroup {
+  font-weight: 700;
+  color: var(--gold);
+  background: var(--bg-input);
 }
 
 /* ===========================
