@@ -625,21 +625,62 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
   const toggleCollapse = (cat: string) =>
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }))
 
-  const handleExpandAll = () => {
-    setCollapsed({})
+  const handleExpandAllHoldings = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => {
+        delete next[cat]
+        activeInvestments.forEach((inv) => {
+          delete next[`${cat}::${inv.subcategory}`]
+        })
+      })
+      return next
+    })
   }
 
-  const handleCollapseAll = () => {
-    const newCollapsed: Record<string, boolean> = {}
-    ALL_CATEGORIES.forEach((cat) => {
-      newCollapsed[cat] = true
-      const items = activeInvestments.filter((inv) => inv.category === cat)
-      const subKeys = Array.from(new Set(items.map((inv) => inv.subcategory)))
-      subKeys.forEach((sub) => {
-        newCollapsed[`${cat}::${sub}`] = true
+  const handleCollapseAllHoldings = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => {
+        next[cat] = true
+        activeInvestments.forEach((inv) => {
+          next[`${cat}::${inv.subcategory}`] = true
+        })
       })
+      return next
     })
-    setCollapsed(newCollapsed)
+  }
+
+  const handleExpandAllAlloc = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => { delete next[`alloc::${cat}`] })
+      return next
+    })
+  }
+
+  const handleCollapseAllAlloc = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => { next[`alloc::${cat}`] = true })
+      return next
+    })
+  }
+
+  const handleExpandAllRebal = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => { delete next[`rebal::${cat}`] })
+      return next
+    })
+  }
+
+  const handleCollapseAllRebal = () => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      ALL_CATEGORIES.forEach((cat) => { next[`rebal::${cat}`] = true })
+      return next
+    })
   }
 
   // Get subcategory options for a given category
@@ -943,7 +984,27 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
 
       {/* Allocation Bars */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-title">Allocation vs Target</div>
+        <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <span>Allocation vs Target</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleExpandAllAlloc}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+              title="Alle Allocation-Details aufklappen"
+            >
+              Alles aufklappen
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleCollapseAllAlloc}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+              title="Alle Allocation-Details einklappen"
+            >
+              Alles einklappen
+            </button>
+          </div>
+        </div>
         {allocation.map((a) => {
           const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
           const hasMultipleSubs = subAlloc.length > 1
@@ -1011,7 +1072,27 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
 
       {/* Rebalancing Recommendations */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-title">Rebalancing Recommendations</div>
+        <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <span>Rebalancing Recommendations</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleExpandAllRebal}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+              title="Alle Rebalancing-Details aufklappen"
+            >
+              Alles aufklappen
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleCollapseAllRebal}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+              title="Alle Rebalancing-Details einklappen"
+            >
+              Alles einklappen
+            </button>
+          </div>
+        </div>
         <div className="rebalance-list">
           {[...allocation].sort((a, b) => b.deviation - a.deviation).map((a) => {
             const targetValue = totalValue * a.targetPercentage
@@ -1456,7 +1537,7 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 className="btn btn-sm btn-ghost"
-                onClick={handleExpandAll}
+                onClick={handleExpandAllHoldings}
                 style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
                 title="Alle Kategorien und Unterkategorien aufklappen"
               >
@@ -1464,7 +1545,7 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
               </button>
               <button
                 className="btn btn-sm btn-ghost"
-                onClick={handleCollapseAll}
+                onClick={handleCollapseAllHoldings}
                 style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
                 title="Alle Kategorien und Unterkategorien einklappen"
               >
