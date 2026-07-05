@@ -1870,3 +1870,115 @@ tr.dimmed-row {
 tr.dimmed-row:hover {
   opacity: 0.65;
 }
+
+/* ===========================
+   Mobile & Responsive Enhancements
+   =========================== */
+
+@media (max-width: 900px) {
+  .holdings-table,
+  .rules-table,
+  .sub-table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Ensure delete buttons are visible on touch screens where hover does not exist */
+  .btn-delete-asset {
+    opacity: 0.75 !important;
+  }
+
+  .card {
+    padding: 18px 14px;
+  }
+
+  .app {
+    padding: 0 16px 36px;
+  }
+}
+
+@media (max-width: 600px) {
+  .header {
+    padding: 16px 0 20px;
+    margin-bottom: 24px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .header-title {
+    gap: 10px;
+  }
+
+  .header h1 {
+    font-size: 1.3rem;
+  }
+
+  .header p {
+    font-size: 0.78rem;
+  }
+
+  /* Stats row layout for mobile */
+  .stats-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-card .val {
+    font-size: 1.15rem;
+  }
+
+  /* Tab navigation wrapping and sizing */
+  .alloc-tabs {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .alloc-tab {
+    min-width: 120px;
+    padding: 8px 10px;
+    font-size: 0.72rem;
+  }
+
+  /* Form inputs stack vertically on narrow screens */
+  .add-asset-fields {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Dimension selector & toolbar wrapping */
+  .dim-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .dim-selector {
+    width: 100%;
+  }
+
+  /* Modals fit small screens comfortably */
+  .modal-content {
+    width: 96%;
+    padding: 16px;
+    max-height: 90vh;
+  }
+
+  /* Comfortable touch targets on mobile */
+  .cat-select,
+  .btn-sm {
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .cat-select-wrap {
+    flex-wrap: wrap;
+  }
+}
