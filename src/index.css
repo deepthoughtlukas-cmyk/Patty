@@ -463,10 +463,81 @@ body {
 .holdings-table .name-cell {
   color: var(--text-primary);
   font-weight: 500;
-  max-width: 200px;
+  max-width: 260px;
+}
+
+.asset-name-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.asset-name-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asset-name-edit-btn {
+  opacity: 0;
+  transition: opacity var(--transition), color var(--transition);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.holdings-table tr:hover .asset-name-edit-btn,
+.asset-name-wrapper:hover .asset-name-edit-btn {
+  opacity: 1;
+}
+
+.asset-name-edit-btn:hover {
+  color: var(--gold);
+  background: rgba(240, 192, 64, 0.1);
+}
+
+.asset-name-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.asset-name-input {
+  background: var(--bg-input);
+  border: 1px solid var(--gold);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 0.86rem;
+  width: 100%;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(240, 192, 64, 0.15);
+}
+
+.custom-name-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 .holdings-table .num {

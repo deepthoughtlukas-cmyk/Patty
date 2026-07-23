@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { Beef, Upload } from 'lucide-react'
 import { parseCSV, type Investment, type AssetCategory } from './utils/parser'
 import { categorizeWithRules } from './utils/categorizer'
-import { saveRule, investmentKey } from './utils/userRules'
+import { saveRule, saveCustomName, investmentKey } from './utils/userRules'
 import { exportWorkspace, importWorkspace } from './utils/workspace'
 import Dashboard from './components/Dashboard'
 
@@ -63,13 +63,39 @@ export default function App() {
     // Find the investment to get its name + ISIN for the rule
     const target = investments?.find((inv) => investmentKey(inv) === key)
     if (target) {
-      saveRule({ isin: target.isin, name: target.name, category, subcategory })
+      saveRule({
+        isin: target.isin,
+        name: target._originalName || target.name,
+        customName: target.customName,
+        category,
+        subcategory,
+      })
     }
     setInvestments((prev) =>
       prev
         ? prev.map((inv) =>
             investmentKey(inv) === key
               ? { ...inv, category, ...(subcategory ? { subcategory } : {}) }
+              : inv
+          )
+        : null
+    )
+  }
+
+  const handleCustomNameChange = (key: string, customName: string | undefined) => {
+    const target = investments?.find((inv) => investmentKey(inv) === key)
+    if (target) {
+      saveCustomName(target, customName)
+    }
+    setInvestments((prev) =>
+      prev
+        ? prev.map((inv) =>
+            investmentKey(inv) === key
+              ? {
+                  ...inv,
+                  name: customName && customName.trim() !== '' ? customName.trim() : (inv._originalName || inv.name),
+                  customName: customName && customName.trim() !== '' ? customName.trim() : undefined,
+                }
               : inv
           )
         : null
@@ -174,6 +200,7 @@ export default function App() {
         <Dashboard
           investments={investments}
           onCategoryChange={handleCategoryChange}
+          onCustomNameChange={handleCustomNameChange}
           onRulesChanged={() => {
             // Re-categorize with updated rules after a rule is deleted/cleared
             setInvestments((prev) => {

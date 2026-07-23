@@ -96,6 +96,8 @@ export function applySplits(investments: Investment[]): Investment[] {
       const splitInv: Investment = {
         ...inv,
         name: `${split.name} ${split.denomination}`,
+        _originalName: inv._originalName || inv.name,
+        customName: undefined,
         quantity: split.coinCount,
         currentValue: splitValue,
         purchasePrice: split.coinCount > 0 ? splitCost / split.coinCount : 0,
@@ -125,6 +127,8 @@ export function applySplits(investments: Investment[]): Investment[] {
       result.push({
         ...inv,
         name: `${inv.name} (Rest)`,
+        _originalName: inv._originalName || inv.name,
+        customName: undefined,
         quantity: remainingQuantity > 0 ? remainingQuantity : 1,
         currentValue: remainingValue,
         purchasePrice: remainingQuantity > 0 ? remainingCost / remainingQuantity : remainingCost,

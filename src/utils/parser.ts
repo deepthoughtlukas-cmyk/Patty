@@ -26,6 +26,8 @@ export interface RawRow {
 
 export interface Investment {
   name: string
+  customName?: string
+  _originalName?: string
   isin: string
   wkn: string
   type: string
@@ -61,6 +63,7 @@ export function parseCSV(text: string): Investment[] {
     .filter((row) => row.Name && row.Name.trim() !== '')
     .map((row) => ({
       name: row.Name.trim(),
+      _originalName: row.Name.trim(),
       isin: row.ISIN?.trim() ?? '',
       wkn: row.WKN?.trim() ?? '',
       type: row.Typ?.trim() ?? '',
@@ -91,6 +94,7 @@ export function parseCSV(text: string): Investment[] {
       
       aggregated.set(key, {
         ...existing,
+        _originalName: existing._originalName || existing.name,
         quantity: totalQuantity,
         currentValue: existing.currentValue + inv.currentValue,
         // Calculate newly weighted average purchase price

@@ -7,6 +7,7 @@ const STORAGE_KEY = 'patty-user-rules'
 export interface UserRule {
   isin: string
   name: string
+  customName?: string
   category: AssetCategory
   subcategory?: string
 }
@@ -32,9 +33,10 @@ export function validIsin(isin: string | undefined | null): string {
   return trimmed
 }
 
-/** Derive a unique key for an investment: real ISIN if available, otherwise name */
-export function investmentKey(inv: { isin: string; name: string }): string {
-  return validIsin(inv.isin) || inv.name
+/** Derive a unique key for an investment: real ISIN if available, otherwise original name or name */
+export function investmentKey(inv: { isin: string; name: string; _originalName?: string; _originalKey?: string }): string {
+  if (inv._originalKey) return inv._originalKey
+  return validIsin(inv.isin) || inv._originalName || inv.name
 }
 
 /** Save (upsert) a single rule — keyed by valid ISIN, falls back to name */
@@ -43,11 +45,65 @@ export function saveRule(rule: UserRule): void {
   const key = validIsin(rule.isin) || rule.name
   const idx = rules.findIndex((r) => (validIsin(r.isin) || r.name) === key)
   if (idx >= 0) {
-    rules[idx] = rule
+    const existing = rules[idx]
+    const updated: UserRule = { ...existing }
+    if (rule.isin !== undefined) updated.isin = rule.isin
+    if (rule.name !== undefined) updated.name = rule.name
+    if (rule.category !== undefined) updated.category = rule.category
+    if (rule.subcategory !== undefined) {
+      updated.subcategory = rule.subcategory
+    } else if (rule.category !== undefined && rule.category !== existing.category) {
+      delete updated.subcategory
+    }
+    if (rule.customName !== undefined) {
+      if (rule.customName.trim() === '') {
+        delete updated.customName
+      } else {
+        updated.customName = rule.customName.trim()
+      }
+    }
+    rules[idx] = updated
   } else {
-    rules.push(rule)
+    const newRule: UserRule = {
+      isin: rule.isin,
+      name: rule.name,
+      category: rule.category
+    }
+    if (rule.subcategory) newRule.subcategory = rule.subcategory
+    if (rule.customName && rule.customName.trim() !== '') {
+      newRule.customName = rule.customName.trim()
+    }
+    rules.push(newRule)
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
+}
+
+/** Save or clear a custom name for an investment while preserving categories */
+export function saveCustomName(inv: { isin: string; name: string; _originalName?: string; category: AssetCategory; subcategory?: string }, customName?: string): void {
+  const rules = loadRules()
+  const vi = validIsin(inv.isin)
+  const lookupName = inv._originalName || inv.name
+  const key = vi || lookupName
+  const idx = rules.findIndex((r) => (validIsin(r.isin) || r.name) === key)
+
+  const trimmed = customName ? customName.trim() : ''
+  if (idx >= 0) {
+    if (trimmed === '' || trimmed === lookupName) {
+      delete rules[idx].customName
+    } else {
+      rules[idx].customName = trimmed
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
+  } else if (trimmed !== '' && trimmed !== lookupName) {
+    rules.push({
+      isin: inv.isin,
+      name: lookupName,
+      customName: trimmed,
+      category: inv.category,
+      subcategory: inv.subcategory
+    })
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
+  }
 }
 
 /** Delete a rule by its key (valid ISIN or name) */
@@ -64,7 +120,12 @@ export function clearRules(): void {
 /** Apply saved user rules to investments (valid ISIN match, fallback name match) */
 export function applyRules(investments: Investment[]): Investment[] {
   const rules = loadRules()
-  if (rules.length === 0) return investments
+  if (rules.length === 0) {
+    return investments.map((inv) => ({
+      ...inv,
+      _originalName: inv._originalName || inv.name,
+    }))
+  }
 
   const byIsin = new Map<string, UserRule>()
   const byName = new Map<string, UserRule>()
@@ -75,11 +136,30 @@ export function applyRules(investments: Investment[]): Investment[] {
   }
 
   return investments.map((inv) => {
+    const originalName = inv._originalName || inv.name
     const vi = validIsin(inv.isin)
-    const rule = (vi ? byIsin.get(vi) : undefined) ?? byName.get(inv.name)
-    if (!rule) return inv
-    const updated = { ...inv, category: rule.category }
+    const rule = (vi ? byIsin.get(vi) : undefined) ?? byName.get(originalName) ?? byName.get(inv.name)
+    if (!rule) {
+      return {
+        ...inv,
+        _originalName: originalName,
+        name: originalName,
+        customName: undefined,
+      }
+    }
+    const updated: Investment = {
+      ...inv,
+      _originalName: originalName,
+      category: rule.category || inv.category,
+    }
     if (rule.subcategory) updated.subcategory = rule.subcategory
+    if (rule.customName && rule.customName.trim() !== '' && rule.customName.trim() !== originalName) {
+      updated.name = rule.customName.trim()
+      updated.customName = rule.customName.trim()
+    } else {
+      updated.name = originalName
+      delete updated.customName
+    }
     return updated
   })
 }
@@ -152,7 +232,7 @@ export function importRulesFromFile(file: File): Promise<number> {
 
         let count = 0
         for (const rule of rulesArray) {
-          if (rule.category && (rule.isin || rule.name)) {
+          if ((rule.category || rule.customName) && (rule.isin || rule.name)) {
             saveRule(rule)
             count++
           }

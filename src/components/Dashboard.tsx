@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw } from 'lucide-react'
 import type { Investment, AssetCategory } from '../utils/parser'
 import {
   computeAllocation,
@@ -56,6 +56,7 @@ import DataManagementModal from './DataManagementModal'
 interface DashboardProps {
   investments: Investment[]
   onCategoryChange: (key: string, category: AssetCategory, subcategory?: string) => void
+  onCustomNameChange?: (key: string, customName: string | undefined) => void
   onRulesChanged?: () => void
   onAddAsset?: (asset: Investment) => void
   onDeleteAsset?: (key: string) => void
@@ -96,7 +97,9 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
   )
 }
 
-export default function Dashboard({ investments, onCategoryChange, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
+export default function Dashboard({ investments, onCategoryChange, onCustomNameChange, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
+  const [editingAssetKey, setEditingAssetKey] = useState<string | null>(null)
+  const [editingNameValue, setEditingNameValue] = useState<string>('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try {
       const raw = localStorage.getItem('patty-collapsed-states')
@@ -474,6 +477,7 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
     if (!newAsset.name.trim() || isNaN(value) || value <= 0) return
     const asset: Investment = {
       name: newAsset.name.trim(),
+      _originalName: newAsset.name.trim(),
       isin: newAsset.isin.trim(),
       wkn: '',
       type: 'Manual',
@@ -1938,7 +1942,98 @@ export default function Dashboard({ investments, onCategoryChange, onRulesChange
                                           }}
                                         />
                                       </td>
-                                      <td className="name-cell" title={inv.name}>{inv.name}</td>
+                                      <td className="name-cell">
+                                        {editingAssetKey === investmentKey(inv) ? (
+                                          <div className="asset-name-input-wrapper" onClick={(e) => e.stopPropagation()}>
+                                            <input
+                                              type="text"
+                                              className="asset-name-input"
+                                              value={editingNameValue}
+                                              onChange={(e) => setEditingNameValue(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  const trimmed = editingNameValue.trim()
+                                                  const originalName = inv._originalName || inv.name
+                                                  onCustomNameChange?.(investmentKey(inv), trimmed === originalName || trimmed === '' ? undefined : trimmed)
+                                                  setTimeout(refreshRules, 50)
+                                                  onRulesChanged?.()
+                                                  setEditingAssetKey(null)
+                                                } else if (e.key === 'Escape') {
+                                                  setEditingAssetKey(null)
+                                                }
+                                              }}
+                                              autoFocus
+                                            />
+                                            <button
+                                              className="btn-icon-sm"
+                                              style={{ background: 'rgba(46, 204, 113, 0.15)', color: '#2ecc71', border: '1px solid rgba(46, 204, 113, 0.3)', padding: 4, borderRadius: 4, cursor: 'pointer' }}
+                                              title="Speichern (Enter)"
+                                              onClick={() => {
+                                                const trimmed = editingNameValue.trim()
+                                                const originalName = inv._originalName || inv.name
+                                                onCustomNameChange?.(investmentKey(inv), trimmed === originalName || trimmed === '' ? undefined : trimmed)
+                                                setTimeout(refreshRules, 50)
+                                                onRulesChanged?.()
+                                                setEditingAssetKey(null)
+                                              }}
+                                            >
+                                              <Check size={14} />
+                                            </button>
+                                            <button
+                                              className="btn-icon-sm"
+                                              style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)', padding: 4, borderRadius: 4, cursor: 'pointer' }}
+                                              title="Abbrechen (Esc)"
+                                              onClick={() => setEditingAssetKey(null)}
+                                            >
+                                              <X size={14} />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="asset-name-wrapper">
+                                            <div
+                                              className="asset-name-text"
+                                              title={inv.customName ? `${inv.customName} (Original: ${inv._originalName || inv.name})\nKlick zum Bearbeiten` : `${inv.name}\nKlick zum Bearbeiten`}
+                                              onClick={() => {
+                                                setEditingAssetKey(investmentKey(inv))
+                                                setEditingNameValue(inv.customName || inv._originalName || inv.name)
+                                              }}
+                                            >
+                                              <span>{inv.name}</span>
+                                              {inv.customName && inv.customName !== (inv._originalName || '') && (
+                                                <span className="custom-name-badge" title={`Manuell benannt. Original: ${inv._originalName || inv.name}`}>
+                                                  Manuell
+                                                </span>
+                                              )}
+                                            </div>
+                                            <button
+                                              className="asset-name-edit-btn"
+                                              title="Namen anpassen"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                setEditingAssetKey(investmentKey(inv))
+                                                setEditingNameValue(inv.customName || inv._originalName || inv.name)
+                                              }}
+                                            >
+                                              <Edit2 size={13} />
+                                            </button>
+                                            {inv.customName && inv.customName !== (inv._originalName || '') && (
+                                              <button
+                                                className="asset-name-edit-btn"
+                                                style={{ opacity: 0.7 }}
+                                                title="Auf Originalnamen zurücksetzen"
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  onCustomNameChange?.(investmentKey(inv), undefined)
+                                                  setTimeout(refreshRules, 50)
+                                                  onRulesChanged?.()
+                                                }}
+                                              >
+                                                <RotateCcw size={13} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
                                       <td>{inv.type}</td>
                                       <td className="num">{fmt(inv.currentValue)}</td>
                                       <td className={`num ${gain >= 0 ? 'positive' : 'negative'}`}>
