@@ -85,10 +85,17 @@ export function applySplits(investments: Investment[]): Investment[] {
     let remainingValue = inv.currentValue
     let remainingCost = inv.purchasePrice * inv.quantity
 
+    let effectiveTotalOunces = config.totalOunces
+    if (inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80')) {
+      effectiveTotalOunces = inv.quantity * 3
+    } else if (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(inv.isin?.toUpperCase() || '') || inv.name.toUpperCase().includes('XETRA-GOLD')) {
+      effectiveTotalOunces = inv.quantity / 31.1035
+    }
+
     for (const split of config.splits) {
       const denomWeight = parseDenomination(split.denomination)
       const splitOunces = split.coinCount * denomWeight
-      const fraction = splitOunces / config.totalOunces
+      const fraction = splitOunces / effectiveTotalOunces
 
       const splitValue = inv.currentValue * fraction
       const splitCost = (inv.purchasePrice * inv.quantity) * fraction

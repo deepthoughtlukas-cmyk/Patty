@@ -623,8 +623,24 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
   const TROY_OZ_IN_GRAMS = 31.1035
   const DEALER_PREMIUM = 1.03
-  const goldEntry = displayInvestments.find((inv) => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold'))
-  const goldGramPrice = goldEntry?.currentPrice || 0
+  
+  let goldGramPrice = 0
+  const knownGramEtfs = ['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7']
+  const exactGramEtf = displayInvestments.find(inv => knownGramEtfs.includes(inv.isin.toUpperCase()) && inv.currentPrice > 0)
+  
+  if (exactGramEtf) {
+    goldGramPrice = exactGramEtf.currentPrice
+  } else {
+    // If no explicit 1-gram ETF is found, look for any gold asset priced between 60 and 95 EUR (typical 1g range)
+    const genericGoldEtf = displayInvestments.find(inv => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold') && inv.currentPrice >= 60 && inv.currentPrice <= 95)
+    if (genericGoldEtf) {
+      goldGramPrice = genericGoldEtf.currentPrice
+    } else {
+      // Fallback to a sensible current market average (approx 75 EUR per gram) if no 1-gram equivalent is available in portfolio
+      goldGramPrice = 75
+    }
+  }
+
   const goldOzPrice = goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
 
   // Extract silver price per oz dynamically if available, otherwise default to 30
@@ -2253,12 +2269,20 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                <input 
                   type="number" 
                   step="0.01" 
-                  value={splitConfig.totalOunces} 
+                  value={
+                    (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD')) ? (splitModalAsset.quantity / 31.1035).toFixed(3) :
+                    (splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? (splitModalAsset.quantity * 3).toFixed(3) :
+                    splitConfig.totalOunces
+                  } 
+                  disabled={(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80'))}
                   onChange={e => setSplitConfigState({...splitConfig, totalOunces: parseFloat(e.target.value) || 0})}
-                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right' }}
+                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? 0.6 : 1 }}
                />
-               <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                 Gesamtwert dieses Assets: <strong style={{ color: 'var(--green)' }}>€ {splitModalAsset.currentValue.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
+               {(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) && (
+                 <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
+               )}
+               <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                 Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {splitModalAsset.currentValue.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
                </span>
             </div>
 
