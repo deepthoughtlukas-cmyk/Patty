@@ -265,6 +265,17 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
       splits: []
     }
 
+    // Sync current depositories from global state into the modal
+    const currentDeps = loadDepositories()
+    if (initialConfig.splits) {
+      for (const s of initialConfig.splits) {
+        const splitKey = getSplitInvestmentKey(targetInv, s.id)
+        if (currentDeps[splitKey] !== undefined) {
+          s.depository = currentDeps[splitKey]
+        }
+      }
+    }
+
     setSplitModalAsset(targetInv)
     setSplitConfigState(JSON.parse(JSON.stringify(initialConfig)))
     setOriginalSplitConfig(JSON.parse(JSON.stringify(initialConfig)))

@@ -34,8 +34,7 @@ export function validIsin(isin: string | undefined | null): string {
 }
 
 /** Derive a unique key for an investment: real ISIN if available, otherwise original name or name */
-export function investmentKey(inv: { isin: string; name: string; _originalName?: string; _originalKey?: string }): string {
-  if (inv._originalKey) return inv._originalKey
+export function investmentKey(inv: { isin: string; name: string; _originalName?: string }): string {
   return validIsin(inv.isin) || inv._originalName || inv.name
 }
 
