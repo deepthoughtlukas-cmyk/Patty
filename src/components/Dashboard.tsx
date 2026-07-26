@@ -389,13 +389,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     setDimVersion((v) => v + 1)
   }
 
-  const handleBulkSetDimTag = (tag: string) => {
-    if (selectedAssets.size === 0 || !activeDimension) return
+  const handleBulkSetDimTag = (dimId: string, tag: string) => {
+    if (selectedAssets.size === 0) return
     Array.from(selectedAssets).forEach((key) => {
       if (tag === 'none') {
-        removeDimensionTag(activeDimension.id, key)
+        removeDimensionTag(dimId, key)
       } else {
-        setDimensionTag(activeDimension.id, key, tag, false)
+        setDimensionTag(dimId, key, tag, false)
       }
     })
     setDimVersion((v) => v + 1)
