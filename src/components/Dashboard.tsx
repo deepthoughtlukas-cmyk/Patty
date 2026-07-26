@@ -1829,6 +1829,23 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
           return (
             <div className="category-group" key={cat}>
               <div className="category-header" onClick={() => toggleCollapse(cat)}>
+                <input
+                  type="checkbox"
+                  style={{ marginRight: 12, cursor: 'pointer' }}
+                  checked={items.length > 0 && items.every(inv => selectedAssets.has(investmentKey(inv)))}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    const newSet = new Set(selectedAssets)
+                    const allKeys = items.map(inv => investmentKey(inv))
+                    if (e.target.checked) {
+                      allKeys.forEach(k => newSet.add(k))
+                    } else {
+                      allKeys.forEach(k => newSet.delete(k))
+                    }
+                    setSelectedAssets(newSet)
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
                 <span className="category-dot" style={{ background: CATEGORY_COLORS[cat] }} />
                 <span className="category-header-name">{cat}</span>
                 {catCost > 0 && (
@@ -1861,6 +1878,23 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                           className="subcategory-header"
                           onClick={() => toggleCollapse(subCollapseKey)}
                         >
+                          <input
+                            type="checkbox"
+                            style={{ marginRight: 12, cursor: 'pointer' }}
+                            checked={subItems.length > 0 && subItems.every(inv => selectedAssets.has(investmentKey(inv)))}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              const newSet = new Set(selectedAssets)
+                              const allKeys = subItems.map(inv => investmentKey(inv))
+                              if (e.target.checked) {
+                                allKeys.forEach(k => newSet.add(k))
+                              } else {
+                                allKeys.forEach(k => newSet.delete(k))
+                              }
+                              setSelectedAssets(newSet)
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
                           <span className="sub-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
                           <span className="subcategory-header-name">{sub}</span>
                           <span className="subcategory-header-count">{subItems.length}</span>
