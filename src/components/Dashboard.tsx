@@ -643,16 +643,23 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   const goldOzPrice = goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
 
-  // Extract silver price per oz dynamically if available, otherwise default to 30
-  const silverEntry = displayInvestments.find((inv) =>
-    (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver') || inv.isin === 'XC0009653103') &&
-    inv.currentPrice > 0
-  )
-  // For A2T0VS (Xtrackers Physical Silver ETC), 1 share represents 3 troy ounces.
-  // We divide the price of 1 share by 3 to get the price per troy ounce.
-  const silverSharePrice = silverEntry ? silverEntry.currentPrice : 30
-  const isXtrackersSilver = silverEntry && (silverEntry.isin === 'DE000A2T0VS9' || silverEntry.name.toUpperCase().includes('SILBER 80'))
-  const SILVER_OZ_PRICE_EUR = isXtrackersSilver ? silverSharePrice / 3 : silverSharePrice
+  let silverSharePrice = 30
+  const knownSilverEtcs = ['JE00B1VS3333', 'IE00B4NCWG09', 'IE00B43VDT70', 'XC0009653103']
+  const exactSilverEtc = displayInvestments.find(inv => knownSilverEtcs.includes(inv.isin?.toUpperCase() || '') && inv.currentPrice > 0)
+  
+  if (exactSilverEtc) {
+     silverSharePrice = exactSilverEtc.currentPrice
+  } else {
+     const xtrackersSilver = displayInvestments.find(inv => inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80'))
+     if (xtrackersSilver && xtrackersSilver.currentPrice > 0) {
+        silverSharePrice = xtrackersSilver.currentPrice / 3
+     } else {
+        // Find generic silver ETC priced realistically between 15 and 50 EUR
+        const genericSilver = displayInvestments.find(inv => (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver')) && inv.currentPrice > 15 && inv.currentPrice < 50 && (!inv.isin || inv.isin.length >= 6))
+        if (genericSilver) silverSharePrice = genericSilver.currentPrice
+     }
+  }
+  const SILVER_OZ_PRICE_EUR = silverSharePrice
 
   const actualChartData = allocation.map((a) => ({
     name: a.category,
@@ -945,9 +952,8 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
               {/* Subcategory weights */}
               {ALL_CATEGORIES.map((cat) => {
                 const catSubWeights = draftSubWeights[cat] || []
-                // Show defaults and any subcategories explicitly targeted in this profile
+                // Show only subcategories explicitly targeted in this profile
                 const allSubNames = new Set([
-                  ...(DEFAULT_SUBCATEGORIES[cat] || []),
                   ...catSubWeights.map((sw) => sw.name),
                 ])
                 const subs = Array.from(allSubNames).sort()
@@ -962,7 +968,6 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     </div>
                     {hasSubs && subs.map((sub) => {
                       const val = Math.round((subWeightMap.get(sub) ?? 0) * 100)
-                      const isDefault = (DEFAULT_SUBCATEGORIES[cat] || []).includes(sub)
                       return (
                         <div className="weight-row sub-weight-row" key={sub}>
                           <span className="weight-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
@@ -985,15 +990,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                             onClick={() => updateDraftSubWeight(cat, sub, Math.min(1, (subWeightMap.get(sub) ?? 0) + 0.01))}
                           >+</button>
                           <span className="weight-pct">{val} %</span>
-                          {!isDefault && (
-                            <button
-                              className="btn-icon-sm"
-                              title={`Remove ${sub}`}
-                              onClick={() => removeDraftSubcategory(cat, sub)}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          )}
+                          <button
+                            className="btn-icon-sm"
+                            title={`${sub} entfernen`}
+                            onClick={() => removeDraftSubcategory(cat, sub)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
                         </div>
                       )
                     })}
@@ -2272,13 +2275,14 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                   value={
                     (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD')) ? (splitModalAsset.quantity / 31.1035).toFixed(3) :
                     (splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? (splitModalAsset.quantity * 3).toFixed(3) :
+                    (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')) ? splitModalAsset.quantity.toFixed(3) :
                     splitConfig.totalOunces
                   } 
-                  disabled={(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80'))}
+                  disabled={(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')))}
                   onChange={e => setSplitConfigState({...splitConfig, totalOunces: parseFloat(e.target.value) || 0})}
-                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? 0.6 : 1 }}
+                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) ? 0.6 : 1 }}
                />
-               {(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) && (
+               {(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) && (
                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
                )}
                <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
