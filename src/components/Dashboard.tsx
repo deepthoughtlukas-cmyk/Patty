@@ -7,7 +7,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera } from 'lucide-react'
+import { toJpeg } from 'html-to-image'
+import download from 'downloadjs'
 import type { Investment, AssetCategory } from '../utils/parser'
 import {
   computeAllocation,
@@ -169,6 +171,24 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const [showDimEditor, setShowDimEditor] = useState(false)
   const [showNewDim, setShowNewDim] = useState(false)
   const [newDimName, setNewDimName] = useState('')
+  const [editingDimName, setEditingDimName] = useState('')
+  
+  const dimensionExportRef = useRef<HTMLDivElement>(null)
+  
+  const handleExportDimensionJPG = useCallback(() => {
+    const activeDimension = dimensions.find(d => d.id === activeDimensionId)
+    if (dimensionExportRef.current && activeDimension) {
+      toJpeg(dimensionExportRef.current, { quality: 0.95, backgroundColor: '#13151a', style: { padding: '20px' } })
+        .then((dataUrl) => {
+          download(dataUrl, `Dimension-${activeDimension.name}.jpg`)
+        })
+        .catch((err) => {
+          console.error('Fehler beim Exportieren als JPG:', err)
+          alert('Export fehlgeschlagen.')
+        })
+    }
+  }, [activeDimensionId, dimensions])
+
   const [newDimTagInput, setNewDimTagInput] = useState('')
   const [editDimTagInput, setEditDimTagInput] = useState('')
 
@@ -1314,6 +1334,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
               </button>
               <button
                 className="btn btn-sm btn-ghost"
+                onClick={handleExportDimensionJPG}
+                title="Dimension als JPG exportieren"
+              >
+                <Camera size={13} style={{ marginRight: 4 }} /> Export JPG
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
                 onClick={() => {
                   setShowNewDim(!showNewDim)
                   setShowDimEditor(false)
@@ -1512,10 +1539,14 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
           {/* Dimension allocation content */}
           {activeDimension && dimAllocation.length > 0 && (
-            <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24, alignItems: 'center' }}>
-              {/* Donut chart */}
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
+            <div ref={dimensionExportRef} style={{ marginTop: 16, background: 'var(--bg-card)', padding: '24px', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '24px', textAlign: 'center', letterSpacing: '0.05em' }}>
+                {activeDimension.name.toUpperCase()} ALLOCATION
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24, alignItems: 'center' }}>
+                {/* Donut chart */}
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
                   <Pie
                     data={dimAllocation.map((a) => ({
                       name: a.tag,
@@ -1575,6 +1606,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                   </div>
                 ))}
               </div>
+            </div>
             </div>
           )}
 
