@@ -49,7 +49,9 @@ function getJSON<T>(key: string, parseFallback: any = null): T | null {
   }
 }
 
-export function exportWorkspace(): void {
+import CryptoJS from 'crypto-js'
+
+export function exportWorkspace(pin?: string): void {
   const data: WorkspaceExport = {
     version: 1,
     timestamp: new Date().toISOString(),
@@ -68,7 +70,12 @@ export function exportWorkspace(): void {
     collapsedStates: getJSON<Record<string, boolean>>(KEYS.COLLAPSED_STATES, {}),
   }
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  let content = JSON.stringify(data, null, 2)
+  if (pin && pin.length === 6) {
+    content = CryptoJS.AES.encrypt(content, pin).toString()
+  }
+
+  const blob = new Blob([content], { type: pin ? 'text/plain' : 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -79,13 +86,33 @@ export function exportWorkspace(): void {
   URL.revokeObjectURL(url)
 }
 
-export function importWorkspace(file: File): Promise<void> {
+export function importWorkspace(file: File, pin?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string
-        const data = JSON.parse(text) as WorkspaceExport
+        let data: WorkspaceExport
+
+        try {
+          // Attempt to parse as plain JSON first (backwards compatibility)
+          data = JSON.parse(text) as WorkspaceExport
+        } catch (jsonErr) {
+          // If JSON parsing fails, assume it's encrypted
+          if (!pin || pin.length !== 6) {
+            reject(new Error('PIN_REQUIRED'))
+            return
+          }
+          try {
+            const bytes = CryptoJS.AES.decrypt(text, pin)
+            const decryptedData = bytes.toString(CryptoJS.enc.Utf8)
+            if (!decryptedData) throw new Error('Invalid PIN')
+            data = JSON.parse(decryptedData) as WorkspaceExport
+          } catch (decErr) {
+            reject(new Error('Falscher PIN oder ungültige/beschädigte Datei'))
+            return
+          }
+        }
 
         if (!data || data.version !== 1) {
           reject(new Error('Invalid workspace file version'))

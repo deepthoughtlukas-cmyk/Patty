@@ -86,10 +86,15 @@ export function applySplits(investments: Investment[]): Investment[] {
     let remainingCost = inv.purchasePrice * inv.quantity
 
     let effectiveTotalOunces = config.totalOunces
+    const hasValidIsin = inv.isin && inv.isin.toUpperCase() !== 'N/A' && inv.isin.length >= 6
+    
     if (inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80')) {
       effectiveTotalOunces = inv.quantity * 3
     } else if (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(inv.isin?.toUpperCase() || '') || inv.name.toUpperCase().includes('XETRA-GOLD')) {
       effectiveTotalOunces = inv.quantity / 31.1035
+    } else if (hasValidIsin && (inv.name.toUpperCase().includes('SILBER') || inv.name.toUpperCase().includes('SILVER') || inv.isin === 'XC0009653103')) {
+      // Standard Silver ETCs (WisdomTree, iShares, Invesco) trade at ~1 oz per share
+      effectiveTotalOunces = inv.quantity
     }
 
     for (const split of config.splits) {

@@ -2475,8 +2475,8 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
         isOpen={dataModalOpen}
         onClose={() => setDataModalOpen(false)}
         onExportWorkspace={exportWorkspace}
-        onImportWorkspace={async (file: File) => {
-          await importWorkspace(file)
+        onImportWorkspace={async (file: File, pin?: string) => {
+          await importWorkspace(file, pin)
           window.location.reload()
         }}
         onExportProfiles={handleExportProfiles}

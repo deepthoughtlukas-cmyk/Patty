@@ -15,8 +15,8 @@ import {
 export interface DataManagementModalProps {
   isOpen: boolean
   onClose: () => void
-  onExportWorkspace: () => void
-  onImportWorkspace: (file: File) => Promise<void>
+  onExportWorkspace: (pin?: string) => void
+  onImportWorkspace: (file: File, pin?: string) => Promise<void>
   onExportProfiles: () => void
   onImportProfiles: (file: File) => void
   onExportDimension: () => void
@@ -42,6 +42,8 @@ export default function DataManagementModal({
   onImportOverrides
 }: DataManagementModalProps) {
   const [modalMsg, setModalMsg] = useState<string | null>(null)
+  const [pinPrompt, setPinPrompt] = useState<{ type: 'export' | 'import', file?: File } | null>(null)
+  const [pin, setPin] = useState('')
 
   if (!isOpen) return null
 
@@ -57,9 +59,22 @@ export default function DataManagementModal({
       await handler(file)
       showMsg(successMsg)
     } catch (err) {
-      showMsg(`Fehler: ${String(err)}`)
+      if (String(err).includes('PIN_REQUIRED')) {
+         setPinPrompt({ type: 'import', file })
+      } else {
+         showMsg(`Fehler: ${String(err)}`)
+      }
     } finally {
       e.target.value = ''
+    }
+  }
+
+  const handleImportWithPin = async (file: File, pinValue: string) => {
+    try {
+      await onImportWorkspace(file, pinValue)
+      showMsg('Workspace erfolgreich entschlüsselt und wiederhergestellt')
+    } catch (err) {
+      showMsg(`Fehler: ${String(err)}`)
     }
   }
 
@@ -70,10 +85,9 @@ export default function DataManagementModal({
       desc: 'Komplette Sicherung und Wiederherstellung des aktuellen Arbeitsbereichs inklusive aller Bestände, Regeln, Profile und Einstellungen.',
       icon: <Database size={22} color="var(--gold)" />,
       onExport: () => {
-        onExportWorkspace()
-        showMsg('Workspace Backup als JSON exportiert')
+        setPinPrompt({ type: 'export' })
       },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, onImportWorkspace, 'Workspace erfolgreich wiederhergestellt')
+      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, (file) => onImportWorkspace(file), 'Workspace erfolgreich wiederhergestellt')
     },
     {
       id: 'profiles',
@@ -302,6 +316,75 @@ export default function DataManagementModal({
             Schließen
           </button>
         </div>
+
+        {/* PIN Overlay */}
+        {pinPrompt && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(10, 12, 18, 0.95)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 10
+          }}>
+            <div style={{
+              background: 'var(--bg-card, #161b26)', padding: '32px', borderRadius: '12px',
+              border: '1px solid var(--border, #2a324a)', width: '380px', textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+            }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '1.2rem', color: 'var(--text-primary)' }}>
+                {pinPrompt.type === 'export' ? 'Workspace verschlüsseln' : 'Workspace entschlüsseln'}
+              </h4>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: 1.4 }}>
+                {pinPrompt.type === 'export' 
+                  ? 'Vergebe einen 6-stelligen PIN (optional). Ohne Eingabe wird die Datei unverschlüsselt exportiert.' 
+                  : 'Diese Datei ist verschlüsselt. Bitte gib den 6-stelligen PIN ein, um sie wiederherzustellen.'}
+              </p>
+              
+              <input 
+                type="password" 
+                maxLength={6}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                autoFocus
+                style={{
+                  width: '100%', padding: '14px', textAlign: 'center', letterSpacing: '12px',
+                  fontSize: '1.5rem', marginBottom: '24px', borderRadius: '8px',
+                  border: '2px solid var(--border)', background: 'var(--bg-input)',
+                  color: 'var(--text-primary)', outline: 'none', transition: 'border-color 0.2s'
+                }}
+                onFocus={(e) => e.target.style.borderColor = 'var(--gold)'}
+                onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                placeholder="••••••"
+              />
+              
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button 
+                  className="btn btn-ghost" 
+                  onClick={() => { setPinPrompt(null); setPin(''); }}
+                  style={{ flex: 1 }}
+                >
+                  Abbrechen
+                </button>
+                <button 
+                  className="btn btn-primary" 
+                  style={{ flex: 1, background: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--bg-input)' : 'var(--gold)', color: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--text-secondary)' : '#000' }}
+                  disabled={pinPrompt.type === 'export' ? (pin.length > 0 && pin.length < 6) : pin.length !== 6}
+                  onClick={() => {
+                    if (pinPrompt.type === 'export') {
+                      onExportWorkspace(pin.length === 6 ? pin : undefined)
+                      showMsg(pin.length === 6 ? 'Workspace verschlüsselt exportiert' : 'Workspace unverschlüsselt exportiert')
+                    } else if (pinPrompt.file) {
+                      handleImportWithPin(pinPrompt.file, pin)
+                    }
+                    setPinPrompt(null)
+                    setPin('')
+                  }}
+                >
+                  {pinPrompt.type === 'export' ? (pin.length === 6 ? 'Verschlüsseln' : 'Unverschlüsselt') : 'Entschlüsseln'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>,
     document.body
