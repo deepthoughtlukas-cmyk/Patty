@@ -115,9 +115,46 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     localStorage.setItem('patty-collapsed-states', JSON.stringify(collapsed))
   }, [collapsed])
 
+  const [manualGoldPrice, setManualGoldPrice] = useState<number>(() => {
+    const raw = localStorage.getItem('patty-manual-gold')
+    return raw ? parseFloat(raw) : 0
+  })
+  const [manualSilverPrice, setManualSilverPrice] = useState<number>(() => {
+    const raw = localStorage.getItem('patty-manual-silver')
+    return raw ? parseFloat(raw) : 0
+  })
+
+  useEffect(() => { localStorage.setItem('patty-manual-gold', manualGoldPrice.toString()) }, [manualGoldPrice])
+  useEffect(() => { localStorage.setItem('patty-manual-silver', manualSilverPrice.toString()) }, [manualSilverPrice])
+
   // Split state
   const [splitVersion, setSplitVersion] = useState(0)
-  const displayInvestments = useMemo(() => applySplits(investments), [investments, splitVersion])
+  const displayInvestments = useMemo(() => {
+    const overridden = investments.map(inv => {
+      let mPrice = 0;
+      if (inv.category === 'Safe-Haven Gold') mPrice = manualGoldPrice;
+      else if (inv.subcategory === 'Silber') mPrice = manualSilverPrice;
+
+      if (mPrice > 0) {
+        const match = inv.name.match(/\b(1\/[248]|1\/10|1\/20|\d+(?:[.,]\d+)?)\s*(oz|unze|ounce)\b/i);
+        if (match) {
+          const sizeStr = match[1].replace(',', '.');
+          let ounces = 0;
+          if (sizeStr.includes('/')) {
+            const [n, d] = sizeStr.split('/');
+            ounces = parseFloat(n) / parseFloat(d);
+          } else {
+            ounces = parseFloat(sizeStr);
+          }
+          if (ounces > 0) {
+            return { ...inv, currentValue: ounces * (inv.quantity || 1) * mPrice };
+          }
+        }
+      }
+      return inv;
+    });
+    return applySplits(overridden);
+  }, [investments, splitVersion, manualGoldPrice, manualSilverPrice])
 
   const [rules, setRules] = useState<UserRule[]>(() => loadRules())
   const [addAssetOpen, setAddAssetOpen] = useState(false)
@@ -1965,6 +2002,27 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                     <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', marginRight: '8px', letterSpacing: '0.05em' }}>
                                       MÜNZEN:
                                     </div>
+                                    <input 
+                                      type="number"
+                                      placeholder="1 oz Preis €"
+                                      value={(isSilver ? manualSilverPrice : manualGoldPrice) || ''}
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) || 0;
+                                        if (isSilver) setManualSilverPrice(val);
+                                        else setManualGoldPrice(val);
+                                      }}
+                                      style={{
+                                        width: '100px',
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--bg-input)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.8rem',
+                                        marginRight: '12px',
+                                        outline: 'none'
+                                      }}
+                                    />
                                     {Object.entries(coinCounts).sort((a, b) => {
                                       // Custom sort to ensure fractions sort logically, e.g., 1 oz > 1/2 oz > 1/4 oz
                                       const valA = eval(a[0].replace(' oz', '')) || 0;
