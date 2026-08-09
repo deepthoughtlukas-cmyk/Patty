@@ -99,6 +99,71 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
   )
 }
 
+function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice }: { subItems: Investment[], isSilver: boolean, manualPrice: number, onSavePrice: (val: number) => void }) {
+  const [localPrice, setLocalPrice] = useState(manualPrice ? manualPrice.toString() : '');
+  
+  useEffect(() => {
+    setLocalPrice(manualPrice ? manualPrice.toString() : '');
+  }, [manualPrice]);
+
+  const coinCounts: Record<string, number> = {};
+  let hasCoins = false;
+  subItems.forEach((inv) => {
+    const match = inv.name.match(/\b(1\/[248]|1\/10|1\/20|\d+(?:[.,]\d+)?)\s*(oz|unze|ounce)\b/i);
+    if (match) {
+      const size = match[1].replace(',', '.') + ' oz';
+      coinCounts[size] = (coinCounts[size] || 0) + (inv.quantity || 1);
+      hasCoins = true;
+    }
+  });
+  
+  if (!hasCoins) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', background: 'var(--bg-surface)', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+      <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', marginRight: '8px', letterSpacing: '0.05em' }}>
+        MÜNZEN:
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', marginRight: '12px', background: 'var(--bg-input)', borderRadius: '6px', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <input 
+          type="number"
+          placeholder="1 oz Preis €"
+          value={localPrice}
+          onChange={(e) => setLocalPrice(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSavePrice(parseFloat(localPrice) || 0) }}
+          style={{
+            width: '90px',
+            padding: '4px 8px',
+            border: 'none',
+            background: 'transparent',
+            color: 'var(--text-primary)',
+            fontSize: '0.8rem',
+            outline: 'none'
+          }}
+        />
+        <button 
+          onClick={() => onSavePrice(parseFloat(localPrice) || 0)}
+          style={{ background: 'var(--primary)', color: 'white', border: 'none', padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          title="Preis übernehmen"
+        >
+          <Check size={14} />
+        </button>
+      </div>
+      {Object.entries(coinCounts).sort((a, b) => {
+        const valA = eval(a[0].replace(' oz', '')) || 0;
+        const valB = eval(b[0].replace(' oz', '')) || 0;
+        return valB - valA;
+      }).map(([size, count]) => (
+        <div key={size} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: '12px', gap: '6px', fontSize: '0.8rem', border: '1px solid var(--border)' }}>
+          <Coins size={14} color={isSilver ? "var(--text-secondary)" : "var(--cat-gold-safe)"} />
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{Math.round(count)}x</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{size}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Dashboard({ investments, onCategoryChange, onCustomNameChange, onRulesChanged, onAddAsset, onDeleteAsset }: DashboardProps) {
   const [editingAssetKey, setEditingAssetKey] = useState<string | null>(null)
   const [editingNameValue, setEditingNameValue] = useState<string>('')
@@ -1982,62 +2047,12 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                         {subOpen && (
                           <div style={{ overflowX: 'auto' }}>
                             {(cat === 'Safe-Haven Gold' || sub === 'Silber') && (
-                              (() => {
-                                const coinCounts: Record<string, number> = {};
-                                let hasCoins = false;
-                                subItems.forEach((inv) => {
-                                  const match = inv.name.match(/\b(1\/[248]|1\/10|1\/20|\d+(?:[.,]\d+)?)\s*(oz|unze|ounce)\b/i);
-                                  if (match) {
-                                    let size = match[1].replace(',', '.') + ' oz';
-                                    coinCounts[size] = (coinCounts[size] || 0) + (inv.quantity || 1);
-                                    hasCoins = true;
-                                  }
-                                });
-                                
-                                if (!hasCoins) return null;
-                                
-                                const isSilver = sub === 'Silber';
-                                return (
-                                  <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', background: 'var(--bg-surface)', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
-                                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', marginRight: '8px', letterSpacing: '0.05em' }}>
-                                      MÜNZEN:
-                                    </div>
-                                    <input 
-                                      type="number"
-                                      placeholder="1 oz Preis €"
-                                      value={(isSilver ? manualSilverPrice : manualGoldPrice) || ''}
-                                      onChange={(e) => {
-                                        const val = parseFloat(e.target.value) || 0;
-                                        if (isSilver) setManualSilverPrice(val);
-                                        else setManualGoldPrice(val);
-                                      }}
-                                      style={{
-                                        width: '100px',
-                                        padding: '4px 8px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--border)',
-                                        background: 'var(--bg-input)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: '0.8rem',
-                                        marginRight: '12px',
-                                        outline: 'none'
-                                      }}
-                                    />
-                                    {Object.entries(coinCounts).sort((a, b) => {
-                                      // Custom sort to ensure fractions sort logically, e.g., 1 oz > 1/2 oz > 1/4 oz
-                                      const valA = eval(a[0].replace(' oz', '')) || 0;
-                                      const valB = eval(b[0].replace(' oz', '')) || 0;
-                                      return valB - valA;
-                                    }).map(([size, count]) => (
-                                      <div key={size} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: '12px', gap: '6px', fontSize: '0.8rem', border: '1px solid var(--border)' }}>
-                                        <Coins size={14} color={isSilver ? "var(--text-secondary)" : "var(--cat-gold-safe)"} />
-                                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{Math.round(count)}x</span>
-                                        <span style={{ color: 'var(--text-secondary)' }}>{size}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              })()
+                              <CoinSummary 
+                                subItems={subItems} 
+                                isSilver={sub === 'Silber'} 
+                                manualPrice={sub === 'Silber' ? manualSilverPrice : manualGoldPrice} 
+                                onSavePrice={val => sub === 'Silber' ? setManualSilverPrice(val) : setManualGoldPrice(val)} 
+                              />
                             )}
                             <table className="holdings-table sub-table">
                               <thead>
