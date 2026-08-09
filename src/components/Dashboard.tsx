@@ -195,7 +195,8 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   // Split state
   const [splitVersion, setSplitVersion] = useState(0)
   const displayInvestments = useMemo(() => {
-    const overridden = investments.map(inv => {
+    const afterSplits = applySplits(investments);
+    return afterSplits.map(inv => {
       let mPrice = 0;
       if (inv.category === 'Safe-Haven Gold') mPrice = manualGoldPrice;
       else if (inv.subcategory === 'Silber') mPrice = manualSilverPrice;
@@ -218,7 +219,6 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
       }
       return inv;
     });
-    return applySplits(overridden);
   }, [investments, splitVersion, manualGoldPrice, manualSilverPrice])
 
   const [rules, setRules] = useState<UserRule[]>(() => loadRules())
