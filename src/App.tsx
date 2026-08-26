@@ -39,7 +39,11 @@ export default function App() {
         const text = e.target?.result as string
         const parsed = parseCSV(text)
         const categorized = categorizeWithRules(parsed)
-        setInvestments(categorized)
+        setInvestments((prev) => {
+          if (!prev) return categorized
+          const manualAssets = prev.filter((inv) => inv.type === 'Manual')
+          return [...categorized, ...manualAssets]
+        })
       } catch (err) {
         setError(`Failed to parse CSV: ${String(err)}`)
       }
