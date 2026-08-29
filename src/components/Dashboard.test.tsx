@@ -14,8 +14,8 @@ vi.mock('recharts', async () => {
 
 describe('Dashboard Interactive UI Tests', () => {
   const mockInvestments = [
-    { id: 'inv1', name: 'Apple Inc.', isin: 'US0378331005', type: 'Aktien', currentValue: 1000, quantity: 10, purchasePrice: 500, sector: 'Technology', region: 'USA', currency: 'EUR', depository: '' },
-    { id: 'inv2', name: 'Microsoft', isin: 'US5949181045', type: 'Aktien', currentValue: 2000, quantity: 20, purchasePrice: 1000, sector: 'Technology', region: 'USA', currency: 'EUR', depository: '' }
+    { id: 'inv1', name: 'Apple Inc.', isin: 'US0378331005', type: 'Stocks', category: 'Stocks', currentValue: 1000, quantity: 10, purchasePrice: 500, sector: 'Technology', region: 'USA', currency: 'EUR', depository: '' },
+    { id: 'inv2', name: 'Microsoft', isin: 'US5949181045', type: 'Stocks', category: 'Stocks', currentValue: 2000, quantity: 20, purchasePrice: 1000, sector: 'Technology', region: 'USA', currency: 'EUR', depository: '' }
   ]
 
   it('renders dashboard with mock data', async () => {
@@ -23,7 +23,7 @@ describe('Dashboard Interactive UI Tests', () => {
     
     // Check if total portfolio value is somewhat rendered (Apple + MS = 3000)
     await waitFor(() => {
-      expect(screen.getByText(/3\.000,00/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/3\.000,00/i)[0]).toBeInTheDocument()
     })
   })
 
@@ -37,5 +37,19 @@ describe('Dashboard Interactive UI Tests', () => {
     
     await user.click(dimensionsTab)
     // Just verify no crash occurred
+  })
+
+  it('renders rebalancing recommendation tooltips with exact recommendations', async () => {
+    render(<Dashboard investments={mockInvestments} onCategoryChange={vi.fn()} />)
+    
+    await waitFor(() => {
+      const elements = screen.getAllByText('Stocks')
+      const rebalItem = elements.map(el => el.closest('.rebalance-item')).find(Boolean)
+      expect(rebalItem).toBeInTheDocument()
+      expect(rebalItem?.getAttribute('title')).toContain('Stocks - Rebalancing Empfehlung')
+      expect(rebalItem?.getAttribute('title')).toContain('Empfehlung:')
+      expect(rebalItem?.getAttribute('title')).toContain('Ist-Wert:')
+      expect(rebalItem?.getAttribute('title')).toContain('Soll-Wert:')
+    })
   })
 })

@@ -1283,10 +1283,40 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             const rebalSubKey = `rebal::${a.category}`
             const rebalSubVisible = !collapsed[rebalSubKey]
 
+            let actionText = ''
+            if (isOk) {
+              actionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
+            } else if (diff > 0) {
+              actionText = `Empfehlung: KAUFEN +${fmtEur(absDiff)}`
+            } else {
+              actionText = `Empfehlung: VERKAUFEN -${fmtEur(absDiff)}`
+            }
+
+            const catTooltipLines = [
+              `${a.category} - Rebalancing Empfehlung`,
+              actionText,
+              `• Ist-Wert: ${fmtEur(a.value)} (${(a.percentage * 100).toFixed(1)}% des Portfolios)`,
+              `• Soll-Wert: ${fmtEur(targetValue)} (${(a.targetPercentage * 100).toFixed(1)}% des Portfolios)`,
+              `• Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)}% (${diff >= 0 ? '+' : ''}${fmtEur(diff)})`,
+            ]
+
+            if (a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0) {
+              const ozExact = (absDiff / goldOzPrice).toFixed(2)
+              const coinsCount = Math.floor(absDiff / goldOzPrice)
+              if (coinsCount >= 1) {
+                catTooltipLines.push(`• Gold-Stückelung: ≥ ${coinsCount} oz Philharmoniker (${ozExact} oz à ${fmtEur(goldOzPrice)})`)
+              } else {
+                catTooltipLines.push(`• Gold-Stückelung: ~${ozExact} oz Gold (1 oz = ${fmtEur(goldOzPrice)})`)
+              }
+            }
+
+            const catTooltipStr = catTooltipLines.join('\n')
+
             return (
               <div key={a.category}>
                 <div
                   className="rebalance-item"
+                  title={catTooltipStr}
                   style={{ cursor: hasMultipleSubs ? 'pointer' : 'default' }}
                   onClick={() => hasMultipleSubs && toggleCollapse(rebalSubKey)}
                 >
@@ -1295,7 +1325,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     ? <ChevronDown size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
                     : <ChevronRight size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
                   )}
-                  <span className="rebalance-item-name" title={a.category === 'Safe-Haven Gold' && goldOzPrice > 0 ? `1 oz Gold: ${fmtEur(goldOzPrice)}` : undefined}>{a.category}</span>
+                  <span className="rebalance-item-name">{a.category}</span>
                   <span className="rebalance-deviation">
                     {a.deviation >= 0 ? '+' : ''}{(a.deviation * 100).toFixed(1)} %
                   </span>
@@ -1314,11 +1344,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                   )}
                   {/* Philharmoniker coin indicator for Safe-Haven Gold */}
                   {a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0 && absDiff >= goldOzPrice && (
-                    <span title={`Buy recommendation ≥ 1 oz Philharmoniker (${fmtEur(goldOzPrice)})`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                    <span title={`Kaufempfehlung ≥ ${Math.floor(absDiff / goldOzPrice)} oz Philharmoniker (${fmtEur(goldOzPrice)}/oz)`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
                       <Coins size={16} color="var(--gold)" />
                     </span>
                   )}
-                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }} title="Actual % / Target % of total portfolio">
+                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
                     {(a.percentage * 100).toFixed(1)}% / {(a.targetPercentage * 100).toFixed(1)}% Portfolio
                   </span>
                 </div>
@@ -1343,10 +1373,39 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                       const subIsOk = subAbsDiff < totalValue * 0.005
                       const subDev = subActualAbs - subAbsTarget
 
+                      let subActionText = ''
+                      if (subIsOk) {
+                        subActionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
+                      } else if (subDiff > 0) {
+                        subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)}`
+                      } else {
+                        subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)}`
+                      }
+
+                      const subTooltipLines = [
+                        `${sa.subcategory} (${a.category}) - Rebalancing Empfehlung`,
+                        subActionText,
+                        `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von ${a.category})`,
+                        `• Soll-Wert: ${fmtEur(subTargetValue)} (${(subAbsTarget * 100).toFixed(1)}% Portfolio / ${(sa.targetPercentage * 100).toFixed(0)}% von ${a.category})`,
+                        `• Abweichung: ${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`,
+                      ]
+
+                      if (sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0) {
+                        const ozExact = (subAbsDiff / SILVER_OZ_PRICE_EUR).toFixed(1)
+                        const coinsCount = Math.floor(subAbsDiff / SILVER_OZ_PRICE_EUR)
+                        if (coinsCount >= 1) {
+                          subTooltipLines.push(`• Silber-Stückelung: ≥ ${coinsCount} oz Silber (${ozExact} oz à ${fmtEur(SILVER_OZ_PRICE_EUR)})`)
+                        } else {
+                          subTooltipLines.push(`• Silber-Stückelung: ~${ozExact} oz Silber (1 oz = ${fmtEur(SILVER_OZ_PRICE_EUR)})`)
+                        }
+                      }
+
+                      const subTooltipStr = subTooltipLines.join('\n')
+
                       return (
-                        <div className="rebalance-item sub-rebalance-item" key={sa.subcategory}>
+                        <div className="rebalance-item sub-rebalance-item" key={sa.subcategory} title={subTooltipStr}>
                           <span className="sub-alloc-dot" style={{ background: sa.color }} />
-                          <span className="rebalance-item-name sub-rebalance-name" title={sa.subcategory === 'Silber' && SILVER_OZ_PRICE_EUR > 0 ? `1 oz Silber: ~${fmtEur(SILVER_OZ_PRICE_EUR)}` : undefined}>{sa.subcategory}</span>
+                          <span className="rebalance-item-name sub-rebalance-name">{sa.subcategory}</span>
                           <span className="rebalance-deviation">
                             {subDev >= 0 ? '+' : ''}{(subDev * 100).toFixed(1)} %
                           </span>
@@ -1365,11 +1424,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                           )}
                           {/* Coin recommendation badge for Silber */}
                           {sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0 && subAbsDiff >= SILVER_OZ_PRICE_EUR && (
-                            <span title={`Kaufempfehlung ≥ 1 oz Silber (${fmtEur(SILVER_OZ_PRICE_EUR)})`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                            <span title={`Kaufempfehlung ≥ ${Math.floor(subAbsDiff / SILVER_OZ_PRICE_EUR)} oz Silber (${fmtEur(SILVER_OZ_PRICE_EUR)}/oz)`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
                               <Coins size={14} color="var(--text-secondary)" />
                             </span>
                           )}
-                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }} title="Actual % / Target % of total portfolio">
+                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
                             {(subActualAbs * 100).toFixed(1)}% / {(subAbsTarget * 100).toFixed(1)}% Portfolio
                           </span>
                         </div>

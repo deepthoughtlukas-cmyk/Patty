@@ -250,7 +250,7 @@ function detectBitpanda(inv: Investment): boolean {
 function detectScalable(inv: Investment): boolean {
   if (!hasValidIsin(inv.isin)) return false
   if (isLikelySmallCap(inv)) return false
-  const type = inv.type.toLowerCase()
+  const type = (inv.type || '').toLowerCase()
   if (EXCLUDED_TYPES_SCALABLE.some((t) => type.includes(t))) return false
 
   const prefix = isinPrefix(inv.isin)
