@@ -2465,30 +2465,33 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
               </button>
             </div>
             
-            <div style={{ display: 'flex', gap: '12px', marginBottom: 20, alignItems: 'center', background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: 20, alignItems: 'center', background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', flexWrap: 'wrap' }}>
                <label style={{ fontSize: '0.88rem', fontWeight: 600 }}>Gesamtmenge in Unzen:</label>
                <input 
                   type="number" 
                   step="0.01" 
                   value={
-                    (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD')) ? (splitModalAsset.quantity / 31.1035).toFixed(3) :
-                    (splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? (splitModalAsset.quantity * 3).toFixed(3) :
-                    (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')) ? splitModalAsset.quantity.toFixed(3) :
+                    (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD')) ? ((splitModalAsset.quantity || 0) / 31.1035).toFixed(3) :
+                    (splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? ((splitModalAsset.quantity || 0) * 3).toFixed(3) :
+                    (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')) ? (splitModalAsset.quantity || 0).toFixed(3) :
                     splitConfig.totalOunces
                   } 
-                  disabled={(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')))}
-                  onChange={e => setSplitConfigState({...splitConfig, totalOunces: parseFloat(e.target.value) || 0})}
+                  disabled={Boolean(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')))}
+                  onChange={e => {
+                    const val = parseFloat(e.target.value) || 0
+                    setSplitConfigState(prev => prev ? ({ ...prev, totalOunces: val }) : prev)
+                  }}
                   style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) ? 0.6 : 1 }}
                />
                {(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) && (
                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
                )}
                <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                 Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {splitModalAsset.currentValue.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
+                 Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {(splitModalAsset.currentValue || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
                </span>
             </div>
 
-            <div style={{ maxHeight: '40vh', overflowY: 'auto', marginBottom: 20, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ maxHeight: '40vh', overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginBottom: 20, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
               <table className="holdings-table" style={{ margin: 0 }}>
                  <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)' }}>
                     <tr>
@@ -2508,46 +2511,60 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                       </tr>
                     ) : (
                       splitConfig.splits.map((s, i) => (
-                        <tr key={s.id}>
+                        <tr key={s.id || `split-${i}`}>
                            <td style={{ padding: '8px 12px' }}>
                               <input type="text" value={s.name} onChange={e => {
-                                 const newSplits = [...splitConfig.splits]
-                                 newSplits[i].name = e.target.value
-                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                                 const val = e.target.value
+                                 setSplitConfigState(prev => {
+                                    if (!prev) return prev
+                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, name: val } : it)
+                                    return { ...prev, splits: newSplits }
+                                 })
                               }} onKeyDown={e => {
                                  if (e.key === ' ') e.stopPropagation()
                               }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
                            </td>
                            <td style={{ padding: '8px 12px' }}>
                               <input type="text" value={s.denomination} onChange={e => {
-                                 const newSplits = [...splitConfig.splits]
-                                 newSplits[i].denomination = e.target.value
-                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                                 const val = e.target.value
+                                 setSplitConfigState(prev => {
+                                    if (!prev) return prev
+                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, denomination: val } : it)
+                                    return { ...prev, splits: newSplits }
+                                 })
                               }} onKeyDown={e => {
                                  if (e.key === ' ') e.stopPropagation()
                               }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
                            </td>
                            <td style={{ padding: '8px 12px' }}>
                               <input type="number" value={s.coinCount} onChange={e => {
-                                 const newSplits = [...splitConfig.splits]
-                                 newSplits[i].coinCount = parseFloat(e.target.value) || 0
-                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                                 const val = parseFloat(e.target.value) || 0
+                                 setSplitConfigState(prev => {
+                                    if (!prev) return prev
+                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, coinCount: val } : it)
+                                    return { ...prev, splits: newSplits }
+                                 })
                               }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)', textAlign: 'right' }} />
                            </td>
                            <td style={{ padding: '8px 12px' }}>
                               <select value={s.depository} onChange={e => {
-                                 const newSplits = [...splitConfig.splits]
-                                 newSplits[i].depository = e.target.value
-                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                                 const val = e.target.value
+                                 setSplitConfigState(prev => {
+                                    if (!prev) return prev
+                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, depository: val } : it)
+                                    return { ...prev, splits: newSplits }
+                                 })
                               }} className="cat-select sub-select" style={{ width: '100%', padding: '6px 8px', height: 'auto', background: 'var(--bg-input)' }}>
                                  <option value="">—</option>
                                  {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
                               </select>
                            </td>
                            <td style={{ padding: '8px 12px', textAlign: 'center' }}>
-                              <button className="btn btn-ghost" onClick={() => {
-                                 const newSplits = splitConfig.splits.filter((_, idx) => idx !== i)
-                                 setSplitConfigState({...splitConfig, splits: newSplits})
+                              <button type="button" className="btn btn-ghost" onClick={() => {
+                                 setSplitConfigState(prev => {
+                                    if (!prev) return prev
+                                    return { ...prev, splits: prev.splits.filter((_, idx) => idx !== i) }
+                                 })
                               }} style={{ padding: 4, display: 'inline-flex', justifyContent: 'center', alignItems: 'center' }}>
                                  <Trash2 size={14} color="var(--red)" />
                               </button>
@@ -2559,27 +2576,35 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
               </table>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-               <button className="btn btn-sm btn-ghost" onClick={() => {
-                  setSplitConfigState({
-                     ...splitConfig,
-                     splits: [...splitConfig.splits, {
-                        id: Math.random().toString(36).substring(2, 9),
-                        name: (splitModalAsset.name.toLowerCase().includes('silber') || splitModalAsset.name.toLowerCase().includes('silver') || splitModalAsset.subcategory === 'Silber')
-                          ? 'Philharmoniker Silber'
-                          : 'Philharmoniker',
-                        denomination: '1 oz',
-                        coinCount: 1,
-                        depository: ''
-                     }]
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+               <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+                  setSplitConfigState(prev => {
+                     if (!prev) return prev
+                     const prevSplits = Array.isArray(prev.splits) ? prev.splits : []
+                     const isSilver = (splitModalAsset?.name || '').toLowerCase().includes('silber') ||
+                                      (splitModalAsset?.name || '').toLowerCase().includes('silver') ||
+                                      splitModalAsset?.subcategory === 'Silber'
+                     return {
+                        ...prev,
+                        splits: [
+                           ...prevSplits,
+                           {
+                              id: Math.random().toString(36).substring(2, 9),
+                              name: isSilver ? 'Philharmoniker Silber' : 'Philharmoniker',
+                              denomination: '1 oz',
+                              coinCount: 1,
+                              depository: ''
+                           }
+                        ]
+                     }
                   })
-               }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px' }}>
+               }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', minHeight: '38px', cursor: 'pointer', touchAction: 'manipulation' }}>
                   <Plus size={14} /> Münze hinzufügen
                </button>
 
-               <div style={{ display: 'flex', gap: '10px' }}>
+               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                   {splitConfig.splits.length > 0 && (
-                     <button className="btn btn-sm btn-ghost" onClick={() => {
+                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
                         if (window.confirm('Möchtest du die Münzstückelung wirklich aufheben?')) {
                            deleteSplitConfig(splitConfig.assetKey)
                            setSplitModalAsset(null)
@@ -2590,10 +2615,10 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                         Split aufheben
                      </button>
                   )}
-                  <button className="btn btn-sm btn-ghost" onClick={handleCloseSplitModal} style={{ padding: '8px 14px' }}>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={handleCloseSplitModal} style={{ padding: '8px 14px' }}>
                      Abbrechen
                   </button>
-                  <button className="btn btn-sm btn-gold" onClick={handleSaveSplit} style={{ padding: '8px 18px', fontWeight: 600 }}>
+                  <button type="button" className="btn btn-sm btn-gold" onClick={handleSaveSplit} style={{ padding: '8px 18px', fontWeight: 600 }}>
                      Speichern
                   </button>
                </div>

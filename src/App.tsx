@@ -18,6 +18,7 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [allowAllFiles, setAllowAllFiles] = useState(false)
 
   useEffect(() => {
     if (investments) {
@@ -29,31 +30,60 @@ export default function App() {
 
   const handleFile = useCallback((file: File) => {
     setError(null)
-    if (!file.name.endsWith('.csv')) {
-      setError('Please upload a CSV file.')
+    setSuccess(null)
+
+    const lowerName = file.name.toLowerCase()
+    const isCsvName = lowerName.endsWith('.csv') || lowerName.endsWith('.txt')
+    const isCsvMime = !file.type ||
+      file.type === 'text/csv' ||
+      file.type === 'text/plain' ||
+      file.type === 'application/vnd.ms-excel' ||
+      file.type === 'application/csv' ||
+      file.type === 'text/comma-separated-values' ||
+      file.type === 'text/x-csv' ||
+      file.type === 'application/x-csv' ||
+      file.type.startsWith('text/') ||
+      file.type === 'application/octet-stream'
+
+    if (!isCsvName && !isCsvMime && !allowAllFiles) {
+      setError('Bitte wähle eine gültige CSV-Datei aus (.csv).')
       return
     }
+
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string
+        if (!text || text.trim() === '') {
+          setError('Die ausgewählte Datei ist leer.')
+          return
+        }
         const parsed = parseCSV(text)
+        if (parsed.length === 0) {
+          setError('Keine gültigen Positionen in der CSV-Datei gefunden. Bitte überprüfe das Spaltenformat (erwartet u. a. Name, ISIN, Aktueller Wert).')
+          return
+        }
         const categorized = categorizeWithRules(parsed)
         setInvestments((prev) => {
           if (!prev) return categorized
           const manualAssets = prev.filter((inv) => inv.type === 'Manual')
           return [...categorized, ...manualAssets]
         })
+        setSuccess(`${parsed.length} Positionen erfolgreich geladen!`)
       } catch (err) {
-        setError(`Failed to parse CSV: ${String(err)}`)
+        setError(`Fehler beim Einlesen der CSV: ${String(err)}`)
       }
     }
+    reader.onerror = () => {
+      setError('Fehler beim Lesen der Datei vom Gerät.')
+    }
     reader.readAsText(file, 'utf-8')
-  }, [])
+  }, [allowAllFiles])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) handleFile(file)
+    e.target.value = ''
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -146,8 +176,9 @@ export default function App() {
             </div>
           )}
 
-          <div
+          <label
             className={`upload-zone${dragOver ? ' drag-over' : ''}`}
+            htmlFor="portfolio-csv-input"
             onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
@@ -161,10 +192,23 @@ export default function App() {
               Supports German-formatted CSV exports (comma decimals, period thousands)
             </p>
             <input
+              id="portfolio-csv-input"
               type="file"
-              accept=".csv"
+              accept={allowAllFiles ? undefined : '.csv,text/csv,text/plain,text/comma-separated-values,application/csv,application/vnd.ms-excel,text/x-csv,application/x-csv,text/*,.txt'}
               onChange={handleInputChange}
             />
+          </label>
+
+          <div style={{ marginTop: 12, textAlign: 'center' }}>
+            <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={allowAllFiles}
+                onChange={(e) => setAllowAllFiles(e.target.checked)}
+                style={{ cursor: 'pointer', accentColor: 'var(--gold)' }}
+              />
+              <span>Dateien auf älterem Android ausgegraut? Filter ausschalten (Alle Dateien anzeigen)</span>
+            </label>
           </div>
 
           <div style={{ marginTop: 24, textAlign: 'center' }}>
@@ -177,12 +221,12 @@ export default function App() {
               <button className="btn btn-ghost" onClick={exportWorkspace}>
                 Export Workspace
               </button>
-              <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
+              <label className="btn btn-ghost" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
                 Import Workspace
                 <input
                   type="file"
-                  accept=".json"
-                  style={{ display: 'none' }}
+                  accept=".json,application/json,text/plain"
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
                   onChange={async (e) => {
                     const file = e.target.files?.[0]
                     if (!file) return

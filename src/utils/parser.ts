@@ -53,31 +53,75 @@ function parseGermanNumber(raw: string): number {
   return isNaN(n) ? 0 : n
 }
 
+/** Helper to safely look up column values with alternative names and case-insensitivity */
+function getField(row: Record<string, string>, ...candidateKeys: string[]): string {
+  if (!row) return ''
+  // 1. Direct match
+  for (const k of candidateKeys) {
+    if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+      return String(row[k]).trim()
+    }
+  }
+  // 2. Case-insensitive / trimmed match
+  const lowerCandidates = candidateKeys.map((k) => k.toLowerCase().trim())
+  for (const [key, val] of Object.entries(row)) {
+    const cleanKey = key.replace(/^\uFEFF/, '').toLowerCase().trim()
+    if (lowerCandidates.includes(cleanKey) && val !== undefined && val !== null && String(val).trim() !== '') {
+      return String(val).trim()
+    }
+  }
+  return ''
+}
+
 export function parseCSV(text: string): Investment[] {
-  const result = Papa.parse<RawRow>(text, {
+  const result = Papa.parse<Record<string, string>>(text, {
     header: true,
-    skipEmptyLines: true,
+    skipEmptyLines: 'greedy',
+    transformHeader: (header: string) => header.replace(/^\uFEFF/, '').trim(),
   })
 
   const rawInvestments = result.data
-    .filter((row) => row.Name && row.Name.trim() !== '')
-    .map((row) => ({
-      name: row.Name.trim(),
-      _originalName: row.Name.trim(),
-      isin: row.ISIN?.trim() ?? '',
-      wkn: row.WKN?.trim() ?? '',
-      type: row.Typ?.trim() ?? '',
-      quantity: parseGermanNumber(row.Anzahl),
-      purchasePrice: parseGermanNumber(row.Kaufpreis),
-      currentPrice: parseGermanNumber(row['Aktueller Kurs']),
-      currentValue: parseGermanNumber(row['Aktueller Wert']),
-      currency: row.Währung?.trim() ?? 'EUR',
-      exchangeRate: parseGermanNumber(row.Wechselkurs) || 1,
-      region: row.Region?.trim() ?? '',
-      sector: row.Sektor?.trim() ?? '',
-      category: 'Stocks' as AssetCategory,
-      subcategory: 'General',
-    }))
+    .filter((row) => {
+      const name = getField(row, 'Name', 'Wertpapierbezeichnung', 'Bezeichnung', 'Titel', 'Instrument', 'Produkt')
+      return name !== ''
+    })
+    .map((row) => {
+      const name = getField(row, 'Name', 'Wertpapierbezeichnung', 'Bezeichnung', 'Titel', 'Instrument', 'Produkt')
+      const isin = getField(row, 'ISIN', 'Isin')
+      const wkn = getField(row, 'WKN', 'Wkn')
+      const type = getField(row, 'Typ', 'Type', 'Art', 'Asset-Typ', 'Wertpapierart')
+      const quantity = parseGermanNumber(getField(row, 'Anzahl', 'Stücke', 'Stück', 'Menge', 'Bestand', 'Shares', 'Quantity'))
+      const purchasePrice = parseGermanNumber(getField(row, 'Kaufpreis', 'Einstandspreis', 'Kaufkurs', 'Einstandskurs', 'Purchase Price', 'Cost Price'))
+      const currentPrice = parseGermanNumber(getField(row, 'Aktueller Kurs', 'Kurs', 'Letzter Kurs', 'Preis', 'Current Price', 'Price'))
+      let currentValue = parseGermanNumber(getField(row, 'Aktueller Wert', 'Gesamtwert', 'Marktwert', 'Kurswert', 'Wert in EUR', 'Wert (EUR)', 'Wert', 'Current Value', 'Market Value'))
+
+      if (currentValue === 0 && quantity > 0 && currentPrice > 0) {
+        currentValue = quantity * currentPrice
+      }
+
+      const currency = getField(row, 'Währung', 'Waehrung', 'Currency') || 'EUR'
+      const exchangeRate = parseGermanNumber(getField(row, 'Wechselkurs', 'Devisenkurs', 'Exchange Rate')) || 1
+      const region = getField(row, 'Region', 'Land', 'Country')
+      const sector = getField(row, 'Sektor', 'Sector', 'Branche', 'Industry')
+
+      return {
+        name,
+        _originalName: name,
+        isin,
+        wkn,
+        type,
+        quantity,
+        purchasePrice,
+        currentPrice,
+        currentValue,
+        currency,
+        exchangeRate,
+        region,
+        sector,
+        category: 'Stocks' as AssetCategory,
+        subcategory: 'General',
+      }
+    })
 
   // Aggregate identical assets
   const aggregated = new Map<string, Investment>()

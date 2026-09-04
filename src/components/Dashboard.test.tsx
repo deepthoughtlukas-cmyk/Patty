@@ -52,4 +52,45 @@ describe('Dashboard Interactive UI Tests', () => {
       expect(rebalItem?.getAttribute('title')).toContain('Soll-Wert:')
     })
   })
+
+  it('can open silver coin denomination dialog and click Münze hinzufügen', async () => {
+    const user = userEvent.setup()
+    const silverInvestments = [
+      {
+        name: 'Silber Phils',
+        isin: 'XC0009653103',
+        quantity: 10,
+        currentValue: 300,
+        category: 'Performance Gold',
+        subcategory: 'Silber',
+        type: 'Münzen',
+        currency: 'EUR',
+        exchangeRate: 1,
+        purchasePrice: 250,
+        currentPrice: 30,
+        sector: '',
+        region: ''
+      }
+    ]
+
+    render(<Dashboard investments={silverInvestments} onCategoryChange={vi.fn()} />)
+
+    // Find the Münz-Stückelung button
+    const splitButton = await screen.findByTitle('Münz-Stückelung')
+    expect(splitButton).toBeInTheDocument()
+    await user.click(splitButton)
+
+    // The modal should now be visible
+    expect(await screen.findByText(/Münz-Stückelung: Silber Phils/i)).toBeInTheDocument()
+    expect(screen.getByText(/Keine Münzen definiert/i)).toBeInTheDocument()
+
+    // Click "Münze hinzufügen"
+    const addCoinButton = screen.getByRole('button', { name: /Münze hinzufügen/i })
+    expect(addCoinButton).toBeInTheDocument()
+    await user.click(addCoinButton)
+
+    // Verify if a coin row was added
+    expect(screen.queryByText(/Keine Münzen definiert/i)).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('Philharmoniker Silber')).toBeInTheDocument()
+  })
 })

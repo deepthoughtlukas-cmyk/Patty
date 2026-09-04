@@ -155,6 +155,7 @@ body {
    =========================== */
 
 .upload-zone {
+  display: block;
   border: 2px dashed var(--border-accent);
   border-radius: var(--radius-lg);
   padding: 64px 32px;
@@ -164,6 +165,8 @@ body {
   background: linear-gradient(135deg, rgba(240, 192, 64, 0.03), transparent);
   position: relative;
   overflow: hidden;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .upload-zone::before {
@@ -220,9 +223,18 @@ body {
 
 .upload-zone input[type="file"] {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
   cursor: pointer;
+  z-index: 10;
+  display: block;
+}
+
+.upload-zone > *:not(input) {
+  pointer-events: none;
 }
 
 /* ===========================
@@ -1282,6 +1294,11 @@ select optgroup {
   transition: all var(--transition);
   outline: none;
   letter-spacing: 0.01em;
+  touch-action: manipulation;
+}
+
+button svg {
+  pointer-events: none;
 }
 
 .btn-primary {
@@ -1989,6 +2006,16 @@ tr.dimmed-row:hover {
 
   .header p {
     font-size: 0.78rem;
+  }
+
+  .upload-zone {
+    padding: 36px 16px;
+  }
+
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 14px;
   }
 
   /* Stats row layout for mobile */

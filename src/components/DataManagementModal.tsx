@@ -289,13 +289,13 @@ export default function DataManagementModal({
                 <label 
                   className="btn btn-sm btn-ghost" 
                   title={`${sec.title} aus JSON-Datei laden`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: '1px solid var(--border)' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}
                 >
                   <Upload size={14} /> Import
                   <input 
                     type="file" 
-                    accept=".json" 
-                    style={{ display: 'none' }} 
+                    accept=".json,application/json,text/plain" 
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} 
                     onChange={sec.onImport} 
                   />
                 </label>
