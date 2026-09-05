@@ -8,8 +8,12 @@ import {
   Layers, 
   Settings, 
   BarChart3, 
-  TrendingUp,
-  Check
+  TrendingUp, 
+  Check,
+  Lock,
+  ShieldCheck,
+  Boxes,
+  Sparkles
 } from 'lucide-react'
 
 export interface DataManagementModalProps {
@@ -41,6 +45,7 @@ export default function DataManagementModal({
   onExportOverrides,
   onImportOverrides
 }: DataManagementModalProps) {
+  const [activeTab, setActiveTab] = useState<'workspace' | 'modules'>('workspace')
   const [modalMsg, setModalMsg] = useState<string | null>(null)
   const [pinPrompt, setPinPrompt] = useState<{ type: 'export' | 'import', file?: File } | null>(null)
   const [pin, setPin] = useState('')
@@ -52,7 +57,11 @@ export default function DataManagementModal({
     setTimeout(() => setModalMsg(null), 3500)
   }
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, handler: (file: File) => Promise<void> | void, successMsg: string) => {
+  const handleFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>, 
+    handler: (file: File) => Promise<void> | void, 
+    successMsg: string
+  ) => {
     const file = e.target.files?.[0]
     if (!file) return
     try {
@@ -60,9 +69,9 @@ export default function DataManagementModal({
       showMsg(successMsg)
     } catch (err) {
       if (String(err).includes('PIN_REQUIRED')) {
-         setPinPrompt({ type: 'import', file })
+        setPinPrompt({ type: 'import', file })
       } else {
-         showMsg(`Fehler: ${String(err)}`)
+        showMsg(`Fehler: ${String(err)}`)
       }
     } finally {
       e.target.value = ''
@@ -78,127 +87,79 @@ export default function DataManagementModal({
     }
   }
 
-  const sections = [
-    {
-      id: 'workspace',
-      title: 'Gesamter Workspace (Backup)',
-      desc: 'Komplette Sicherung und Wiederherstellung des aktuellen Arbeitsbereichs inklusive aller Bestände, Regeln, Profile und Einstellungen.',
-      icon: <Database size={22} color="var(--gold)" />,
-      onExport: () => {
-        setPinPrompt({ type: 'export' })
-      },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, (file) => onImportWorkspace(file), 'Workspace erfolgreich wiederhergestellt')
-    },
+  const modularSections = [
     {
       id: 'profiles',
       title: 'Rebalancing-Profile',
       desc: 'Benutzerdefinierte Ziel-Allokationen und Subkategorie-Gewichtungen für dein Portfolio-Rebalancing.',
-      icon: <BarChart3 size={22} color="#3b82f6" />,
+      icon: <BarChart3 size={20} color="#3b82f6" />,
       onExport: () => {
         onExportProfiles()
         showMsg('Rebalancing-Profile exportiert')
       },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, onImportProfiles, 'Rebalancing-Profile importiert')
+      onImport: (e: React.ChangeEvent<HTMLInputElement>) => 
+        handleFileChange(e, onImportProfiles, 'Rebalancing-Profile importiert')
     },
     {
       id: 'dimensions',
       title: 'Analysedimensionen',
       desc: 'Eigene Dimensionen, Regionen und Markt-Tagging-Regeln für die Cross-Dimension Analyse.',
-      icon: <Layers size={22} color="#10b981" />,
+      icon: <Layers size={20} color="#10b981" />,
       onExport: () => {
         onExportDimension()
         showMsg('Analysedimension exportiert')
       },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, onImportDimension, 'Analysedimension importiert')
+      onImport: (e: React.ChangeEvent<HTMLInputElement>) => 
+        handleFileChange(e, onImportDimension, 'Analysedimension importiert')
     },
     {
       id: 'rules',
       title: 'Benutzerregeln (User Rules)',
       desc: 'Individuelle ISIN-Mappings, benutzerdefinierte Namensregeln und Kategorisierungs-Overrides.',
-      icon: <Settings size={22} color="#a855f7" />,
+      icon: <Settings size={20} color="#a855f7" />,
       onExport: () => {
         onExportRules()
         showMsg('Benutzerregeln exportiert')
       },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, onImportRules, 'Benutzerregeln importiert')
+      onImport: (e: React.ChangeEvent<HTMLInputElement>) => 
+        handleFileChange(e, onImportRules, 'Benutzerregeln importiert')
     },
     {
       id: 'overrides',
       title: 'Broker-Overrides',
       desc: 'Manuell gesetzte Verfügbarkeiten und individuelle Handelsplätze für deine Assets.',
-      icon: <TrendingUp size={22} color="#f97316" />,
+      icon: <TrendingUp size={20} color="#f97316" />,
       onExport: () => {
         onExportOverrides()
         showMsg('Broker-Overrides exportiert')
       },
-      onImport: (e: React.ChangeEvent<HTMLInputElement>) => handleFileChange(e, onImportOverrides, 'Broker-Overrides importiert')
+      onImport: (e: React.ChangeEvent<HTMLInputElement>) => 
+        handleFileChange(e, onImportOverrides, 'Broker-Overrides importiert')
     }
   ]
 
   return createPortal(
     <div 
-      className="modal-backdrop" 
+      className="data-modal-backdrop" 
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(10, 12, 18, 0.75)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: '20px'
-      }}
     >
       <div 
-        className="modal-content" 
+        className="data-modal-dialog" 
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-card, #161b26)',
-          border: '1px solid var(--border, #2a324a)',
-          borderRadius: 'var(--radius-lg, 12px)',
-          width: '100%',
-          maxWidth: '680px',
-          maxHeight: '85vh',
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-          overflow: 'hidden'
-        }}
       >
         {/* Header */}
-        <div style={{ 
-          padding: '20px 24px', 
-          borderBottom: '1px solid var(--border, #2a324a)', 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          background: 'var(--bg-base, #0f131d)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '38px',
-              height: '38px',
-              borderRadius: '8px',
-              background: 'rgba(240, 192, 64, 0.1)',
-              border: '1px solid rgba(240, 192, 64, 0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
+        <div className="data-modal-header">
+          <div className="data-modal-header-left">
+            <div className="data-modal-header-icon">
               <Database size={20} color="var(--gold)" />
             </div>
             <div>
-              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+              <h3 className="data-modal-title">
                 Daten Ex- & Import Center
               </h3>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              <p className="data-modal-subtitle">
                 Sichere, exportiere und importiere deine JSON-Konfigurationen und Daten.
               </p>
             </div>
@@ -213,127 +174,249 @@ export default function DataManagementModal({
           </button>
         </div>
 
-        {/* Success / Status Banner */}
+        {/* Tab Navigation */}
+        <div className="data-modal-tabs">
+          <button 
+            type="button"
+            className={`data-modal-tab-btn ${activeTab === 'workspace' ? 'active' : ''}`}
+            onClick={() => setActiveTab('workspace')}
+          >
+            <Database size={15} />
+            <span>Workspace Backup</span>
+          </button>
+          <button 
+            type="button"
+            className={`data-modal-tab-btn ${activeTab === 'modules' ? 'active' : ''}`}
+            onClick={() => setActiveTab('modules')}
+          >
+            <Boxes size={15} />
+            <span>Einzelne Module</span>
+            <span className="data-modal-tab-badge">4</span>
+          </button>
+        </div>
+
+        {/* Success / Status Notification */}
         {modalMsg && (
-          <div style={{
-            margin: '16px 24px 0 24px',
-            padding: '10px 16px',
-            background: 'rgba(46, 117, 89, 0.2)',
-            border: '1px solid rgba(39, 174, 96, 0.4)',
-            borderRadius: 'var(--radius-md, 8px)',
-            color: '#2ecc71',
-            fontSize: '0.88rem',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            animation: 'fadeIn 0.2s ease'
-          }}>
-            <Check size={16} />
-            <span>{modalMsg}</span>
+          <div style={{ padding: '12px 24px 0' }}>
+            <div className="data-modal-toast">
+              <Check size={16} />
+              <span>{modalMsg}</span>
+            </div>
           </div>
         )}
 
-        {/* List of Data Sections */}
-        <div style={{ 
-          padding: '20px 24px', 
-          overflowY: 'auto', 
-          display: 'flex', 
-          flexDirection: 'column', 
-          gap: '16px' 
-        }}>
-          {sections.map((sec) => (
-            <div 
-              key={sec.id}
-              style={{
-                background: 'var(--bg-input, #111520)',
-                border: '1px solid var(--border, #2a324a)',
-                borderRadius: 'var(--radius-md, 8px)',
-                padding: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '16px',
-                transition: 'border-color 0.2s ease'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1 }}>
-                <div style={{ 
-                  marginTop: '2px', 
-                  padding: '8px', 
-                  background: 'rgba(255,255,255,0.03)', 
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.05)'
+        {/* Modal Content Body */}
+        <div className="data-modal-body">
+          {activeTab === 'workspace' ? (
+            /* Workspace Backup Tab */
+            <div className="data-modal-hero-card">
+              <div className="data-modal-hero-header">
+                <div style={{
+                  width: '42px',
+                  height: '42px',
+                  borderRadius: '10px',
+                  background: 'rgba(240, 192, 64, 0.12)',
+                  border: '1px solid rgba(240, 192, 64, 0.25)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
                 }}>
-                  {sec.icon}
+                  <Database size={22} color="var(--gold)" />
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.98rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    {sec.title}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Gesamter Workspace
+                    </span>
+                    <span className="data-modal-hero-badge">
+                      <Sparkles size={11} /> Empfohlen
+                    </span>
                   </div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                    {sec.desc}
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    Komplette Sicherung und Wiederherstellung des aktuellen Arbeitsbereichs inklusive aller Depots, Regeln, Profile und Einstellungen.
+                  </p>
+                  <div className="data-modal-hero-pills">
+                    <span className="data-modal-hero-pill">
+                      <Check size={12} color="var(--green)" /> Bestände & Depots
+                    </span>
+                    <span className="data-modal-hero-pill">
+                      <Check size={12} color="var(--green)" /> Ziel-Allokationen
+                    </span>
+                    <span className="data-modal-hero-pill">
+                      <Check size={12} color="var(--green)" /> Dimensionen & Tags
+                    </span>
+                    <span className="data-modal-hero-pill">
+                      <Check size={12} color="var(--green)" /> Regeln & Overrides
+                    </span>
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                <button 
-                  className="btn btn-sm btn-ghost" 
-                  onClick={sec.onExport}
-                  title={`${sec.title} als JSON herunterladen`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid var(--border)' }}
-                >
-                  <Download size={14} /> Export
-                </button>
-                <label 
-                  className="btn btn-sm btn-ghost" 
-                  title={`${sec.title} aus JSON-Datei laden`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}
-                >
-                  <Upload size={14} /> Import
-                  <input 
-                    type="file" 
-                    accept=".json,application/json,text/plain" 
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} 
-                    onChange={sec.onImport} 
-                  />
-                </label>
+              <div className="data-modal-hero-actions">
+                {/* Export Card */}
+                <div className="data-modal-hero-action-card">
+                  <div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                      Workspace sichern
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                      Erstellt eine vollständige Sicherungsdatei (.json). Optional mit PIN-Schutz.
+                    </div>
+                  </div>
+                  <button 
+                    className="btn btn-gold" 
+                    onClick={() => setPinPrompt({ type: 'export' })}
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px', 
+                      width: '100%',
+                      padding: '10px 14px',
+                      fontWeight: 700,
+                      fontSize: '0.88rem'
+                    }}
+                  >
+                    <Download size={16} /> Backup exportieren
+                  </button>
+                </div>
+
+                {/* Import Card */}
+                <div className="data-modal-hero-action-card">
+                  <div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                      Workspace laden
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                      Stellt den gesamten Zustand aus einer gesicherten JSON-Datei wieder her.
+                    </div>
+                  </div>
+                  <label 
+                    className="btn btn-ghost" 
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px', 
+                      width: '100%',
+                      padding: '10px 14px',
+                      cursor: 'pointer', 
+                      position: 'relative', 
+                      overflow: 'hidden',
+                      border: '1px solid rgba(16, 185, 129, 0.4)',
+                      background: 'rgba(16, 185, 129, 0.08)',
+                      color: '#6ee7b7',
+                      fontWeight: 700,
+                      fontSize: '0.88rem'
+                    }}
+                  >
+                    <Upload size={16} /> Backup importieren
+                    <input 
+                      type="file" 
+                      accept=".json,application/json,text/plain" 
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} 
+                      onChange={(e) => handleFileChange(e, (file) => onImportWorkspace(file), 'Workspace erfolgreich wiederhergestellt')} 
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="data-modal-info-box">
+                <ShieldCheck size={18} color="var(--gold)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>
+                  <strong>Lokale Datensicherheit:</strong> Alle Exporte bleiben ausschließlich auf deinem Gerät. Du kannst Backups optional mit einem 6-stelligen PIN verschlüsseln, um deine Finanzdaten zu schützen.
+                </span>
               </div>
             </div>
-          ))}
+          ) : (
+            /* Modular Settings Tab */
+            <>
+              <div className="data-modal-info-box" style={{ marginBottom: '4px' }}>
+                <Layers size={18} color="var(--gold)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>
+                  Hier kannst du gezielt einzelne Konfigurationen exportieren oder importieren, ohne deinen gesamten Workspace zu überschreiben.
+                </span>
+              </div>
+
+              {modularSections.map((sec) => (
+                <div key={sec.id} className="data-modal-card">
+                  <div className="data-modal-card-left">
+                    <div className="data-modal-card-icon">
+                      {sec.icon}
+                    </div>
+                    <div className="data-modal-card-info">
+                      <div className="data-modal-card-title">
+                        {sec.title}
+                      </div>
+                      <div className="data-modal-card-desc">
+                        {sec.desc}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="data-modal-card-actions">
+                    <button 
+                      className="data-modal-btn-export" 
+                      onClick={sec.onExport}
+                      title={`${sec.title} als JSON herunterladen`}
+                    >
+                      <Download size={14} /> Export
+                    </button>
+                    <label 
+                      className="data-modal-btn-import" 
+                      title={`${sec.title} aus JSON-Datei laden`}
+                    >
+                      <Upload size={14} /> Import
+                      <input 
+                        type="file" 
+                        accept=".json,application/json,text/plain" 
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} 
+                        onChange={sec.onImport} 
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         {/* Footer */}
-        <div style={{ 
-          padding: '14px 24px', 
-          borderTop: '1px solid var(--border, #2a324a)', 
-          background: 'var(--bg-base, #0f131d)',
-          display: 'flex',
-          justifyContent: 'flex-end'
-        }}>
-          <button className="btn btn-sm btn-ghost" onClick={onClose} style={{ padding: '6px 16px' }}>
+        <div className="data-modal-footer">
+          <button className="btn btn-sm btn-ghost" onClick={onClose} style={{ padding: '6px 18px' }}>
             Schließen
           </button>
         </div>
 
         {/* PIN Overlay */}
         {pinPrompt && (
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(10, 12, 18, 0.95)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 10
-          }}>
-            <div style={{
-              background: 'var(--bg-card, #161b26)', padding: '32px', borderRadius: '12px',
-              border: '1px solid var(--border, #2a324a)', width: '380px', textAlign: 'center',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
-            }}>
-              <h4 style={{ margin: '0 0 8px 0', fontSize: '1.2rem', color: 'var(--text-primary)' }}>
+          <div 
+            className="data-modal-backdrop"
+            style={{
+              position: 'absolute',
+              background: 'rgba(10, 12, 18, 0.94)',
+              zIndex: 10
+            }}
+          >
+            <div className="pin-prompt-box">
+              <div style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '12px',
+                background: 'rgba(240, 192, 64, 0.12)',
+                border: '1px solid rgba(240, 192, 64, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 14px'
+              }}>
+                <Lock size={20} color="var(--gold)" />
+              </div>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '1.15rem', color: 'var(--text-primary)', fontWeight: 700 }}>
                 {pinPrompt.type === 'export' ? 'Workspace verschlüsseln' : 'Workspace entschlüsseln'}
               </h4>
-              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: 1.4 }}>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: 1.4 }}>
                 {pinPrompt.type === 'export' 
                   ? 'Vergebe einen 6-stelligen PIN (optional). Ohne Eingabe wird die Datei unverschlüsselt exportiert.' 
                   : 'Diese Datei ist verschlüsselt. Bitte gib den 6-stelligen PIN ein, um sie wiederherzustellen.'}
@@ -341,32 +424,50 @@ export default function DataManagementModal({
               
               <input 
                 type="password" 
+                inputMode="numeric"
+                pattern="[0-9]*"
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                 autoFocus
                 style={{
-                  width: '100%', padding: '14px', textAlign: 'center', letterSpacing: '12px',
-                  fontSize: '1.5rem', marginBottom: '24px', borderRadius: '8px',
-                  border: '2px solid var(--border)', background: 'var(--bg-input)',
-                  color: 'var(--text-primary)', outline: 'none', transition: 'border-color 0.2s'
+                  width: '100%', 
+                  padding: '12px', 
+                  textAlign: 'center', 
+                  letterSpacing: '10px',
+                  fontSize: '1.4rem', 
+                  marginBottom: '20px', 
+                  borderRadius: '8px',
+                  border: '2px solid var(--border)', 
+                  background: 'var(--bg-input)',
+                  color: 'var(--text-primary)', 
+                  outline: 'none', 
+                  transition: 'border-color 0.2s',
+                  fontFamily: 'monospace',
+                  boxSizing: 'border-box'
                 }}
                 onFocus={(e) => e.target.style.borderColor = 'var(--gold)'}
                 onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
                 placeholder="••••••"
               />
               
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <button 
                   className="btn btn-ghost" 
                   onClick={() => { setPinPrompt(null); setPin(''); }}
-                  style={{ flex: 1 }}
+                  style={{ minHeight: '38px', borderRadius: '8px' }}
                 >
                   Abbrechen
                 </button>
                 <button 
                   className="btn btn-primary" 
-                  style={{ flex: 1, background: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--bg-input)' : 'var(--gold)', color: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--text-secondary)' : '#000' }}
+                  style={{ 
+                    minHeight: '38px', 
+                    borderRadius: '8px',
+                    background: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--bg-input)' : 'var(--gold)', 
+                    color: (pinPrompt.type === 'export' && pin.length < 6 && pin.length > 0) || (pinPrompt.type === 'import' && pin.length !== 6) ? 'var(--text-secondary)' : '#000',
+                    fontWeight: 600
+                  }}
                   disabled={pinPrompt.type === 'export' ? (pin.length > 0 && pin.length < 6) : pin.length !== 6}
                   onClick={() => {
                     if (pinPrompt.type === 'export') {
