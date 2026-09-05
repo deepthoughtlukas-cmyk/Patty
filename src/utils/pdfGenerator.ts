@@ -184,7 +184,8 @@ export function generateMobileRebalancePDF(
   allocation: any[],
   activeSubWeights: Record<string, any[]>,
   goldOzPrice: number,
-  silverOzPrice: number
+  silverOzPrice: number,
+  rebalanceMethod: 'core-first' | 'standard' = 'core-first'
 ) {
   // Page size: 108mm x 192mm (9:16 portrait)
   const doc = new jsPDF({
@@ -198,79 +199,107 @@ export function generateMobileRebalancePDF(
 
   // Draw Header
   const drawHeader = (pageNum: number) => {
-    doc.setFillColor(26, 30, 42) // #1a1e2a
-    doc.rect(0, 0, 108, 18, 'F')
+    doc.setFillColor(26, 30, 42) // Dark card bg
+    doc.rect(0, 0, 108, 16, 'F')
     
-    doc.setTextColor(255, 255, 255)
+    // Logo / Title
+    doc.setTextColor(240, 192, 64) // Gold color
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(13)
-    doc.text('Rebalancing Report', 6, 8)
+    doc.setFontSize(11)
+    doc.text('PATTY', 10, 10)
     
+    doc.setTextColor(232, 234, 240)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.text(`Mobile Ansicht · Seite ${pageNum}`, 6, 13)
+    doc.text('Rebalancing Report', 27, 10)
+
+    doc.setFontSize(7)
+    doc.setTextColor(139, 144, 160)
+    doc.text(new Date().toLocaleDateString('de-DE'), 85, 10)
+
+    doc.setDrawColor(255, 255, 255, 0.1)
+    doc.line(0, 16, 108, 16)
   }
 
   drawHeader(1)
-  
-  let y = 26
-  
-  // Title / Date info
-  doc.setTextColor(80, 80, 80)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
-  doc.text(`Datum: ${new Date().toLocaleDateString('de-DE')} ${new Date().toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'})}`, 6, y)
-  y += 4
-  
-  doc.setTextColor(26, 30, 42)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10)
-  doc.text(`Gesamtwert: ${fmtEur(totalValue)}`, 6, y)
-  y += 6
 
-  // Separator Line
-  doc.setDrawColor(220, 220, 220)
-  doc.setLineWidth(0.2)
-  doc.line(6, y, 102, y)
-  y += 6
-
+  let y = 24
   let pageCount = 1
 
-  // Sort by absolute deviation descending
-  const sortedAlloc = [...allocation].sort((a, b) => Math.abs(b.deviation) - Math.abs(a.deviation))
+  // Summary Metrics Card
+  doc.setFillColor(245, 247, 250)
+  doc.roundedRect(8, y, 92, 16, 2, 2, 'F')
+  
+  doc.setTextColor(100, 100, 100)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.text('PORTFOLIO GESAMTWERT', 12, y + 5.5)
 
-  sortedAlloc.forEach((a) => {
+  doc.setTextColor(20, 20, 20)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.text(fmtEur(totalValue), 12, y + 12)
+
+  y += 22
+
+  // Categories list
+  allocation.forEach((a) => {
     const targetValue = totalValue * a.targetPercentage
     const diff = targetValue - a.value
     const absDiff = Math.abs(diff)
-    const isOk = absDiff < totalValue * 0.01
+    const catTolerance = totalValue * 0.0025
+    const isOk = absDiff < catTolerance
 
-    if (y > 175) {
+    if (y > 165) {
       doc.addPage([108, 192])
       pageCount++
       drawHeader(pageCount)
       y = 26
     }
 
-    // Category Color Dot/Bar
+    // Category Card Top
     const rHex = parseInt(a.color.slice(1, 3), 16) || 100
     const gHex = parseInt(a.color.slice(3, 5), 16) || 100
     const bHex = parseInt(a.color.slice(5, 7), 16) || 100
-    
-    doc.setFillColor(rHex, gHex, bHex)
-    doc.rect(6, y - 3, 2, 4.5, 'F')
 
-    // Category Name
-    doc.setTextColor(26, 30, 42)
+    doc.setFillColor(rHex, gHex, bHex)
+    doc.circle(10, y - 1, 1.5, 'F')
+
+    doc.setTextColor(20, 20, 20)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
-    doc.text(a.category, 10, y)
+    doc.text(a.category, 14, y)
     
     // Deviation text
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8.5)
     doc.setTextColor(110, 110, 110)
-    doc.text(`Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)} %`, 10, y + 4)
+    doc.text(`Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)} %`, 14, y + 4)
+
+    const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
+    const isStocks = a.category === 'Stocks'
+    const coreSub = isStocks ? subAlloc.find(sa => sa.subcategory.toLowerCase() === 'core') : undefined
+    const hasCoreRef = isStocks && rebalanceMethod === 'core-first' && !!coreSub && coreSub.targetPercentage > 0
+    const stocksIsOk = isOk
+    const stocksIsUnder = diff > catTolerance
+    const stocksIsOver = diff < -catTolerance
+
+    // In Core-First Stage 2 (Stocks is on target), precompute satellite diffs so Core can absorb them
+    let coreStage2NetDiff = 0
+    if (hasCoreRef && coreSub && coreSub.value > 0 && stocksIsOk) {
+      subAlloc.forEach((sa) => {
+        if (sa.subcategory.toLowerCase() !== 'core') {
+          const targetRatio = sa.targetPercentage / coreSub.targetPercentage
+          const subTargetVal = coreSub.value * targetRatio
+          const sDiff = subTargetVal - sa.value
+          const sAbsDiff = Math.abs(sDiff)
+          const sOk = sAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
+          if (!sOk) {
+            coreStage2NetDiff -= sDiff
+          }
+        }
+      })
+    }
 
     // Recommendation Badge / Text
     let badgeText = ''
@@ -279,20 +308,20 @@ export function generateMobileRebalancePDF(
       badgeText = 'On Target'
       badgeColor = [46, 117, 89]
     } else if (diff > 0) {
-      badgeText = `BUY ${fmtEur(absDiff)}`
+      badgeText = hasCoreRef ? `BUY Core ${fmtEur(absDiff)}` : `BUY ${fmtEur(absDiff)}`
       badgeColor = [39, 174, 96]
     } else {
-      badgeText = `SELL ${fmtEur(absDiff)}`
+      badgeText = hasCoreRef ? `SELL Core ${fmtEur(absDiff)}` : `SELL ${fmtEur(absDiff)}`
       badgeColor = [192, 57, 43]
     }
 
     doc.setFillColor(...badgeColor)
-    doc.rect(70, y - 3.5, 32, 5.5, 'F')
+    doc.rect(68, y - 3.5, 34, 5.5, 'F')
     
     doc.setTextColor(255, 255, 255)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(7.5)
-    doc.text(badgeText, 86, y + 0.25, { align: 'center' })
+    doc.setFontSize(7)
+    doc.text(badgeText, 85, y + 0.25, { align: 'center' })
 
     // If Safe-Haven Gold and need coin
     if (a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0 && absDiff >= goldOzPrice) {
@@ -300,24 +329,60 @@ export function generateMobileRebalancePDF(
       doc.setTextColor(212, 168, 83) // Gold color
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(7.5)
-      doc.text(`Empfehlung: ≥ ${ozCount} oz Gold (${fmtEur(goldOzPrice)}/oz)`, 10, y + 8.5)
+      doc.text(`Empfehlung: ≥ ${ozCount} oz Gold (${fmtEur(goldOzPrice)}/oz)`, 14, y + 8.5)
       y += 4.5
     }
 
     y += 10
 
     // Subcategories
-    const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
     if (subAlloc.length > 1) {
       const activeSubs = subAlloc.filter(sa => sa.targetPercentage > 0)
       activeSubs.forEach((sa) => {
+        const isThisCore = hasCoreRef && sa.subcategory.toLowerCase() === 'core'
         const subAbsTarget = a.targetPercentage * sa.targetPercentage
         const subActualAbs = a.percentage * sa.percentage
-        const subTargetValue = totalValue * subAbsTarget
-        const subDiff = subTargetValue - sa.value
-        const subAbsDiff = Math.abs(subDiff)
-        const subIsOk = subAbsDiff < totalValue * 0.005
-        const subDev = subActualAbs - subAbsTarget
+        let subTargetValue = totalValue * subAbsTarget
+        let subDiff = subTargetValue - sa.value
+        let subAbsDiff = Math.abs(subDiff)
+        let subIsOk = subAbsDiff < totalValue * 0.005
+        let subDev = subActualAbs - subAbsTarget
+        let devLabel = `(${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}%)`
+
+        if (hasCoreRef) {
+          if (isThisCore) {
+            if (stocksIsUnder) {
+              subDiff = absDiff
+              subAbsDiff = absDiff
+              subIsOk = false
+            } else if (stocksIsOver) {
+              subDiff = -absDiff
+              subAbsDiff = absDiff
+              subIsOk = false
+            } else {
+              subDiff = coreStage2NetDiff
+              subAbsDiff = Math.abs(subDiff)
+              subIsOk = subAbsDiff < Math.max(coreSub ? coreSub.value * 0.02 : 0, totalValue * 0.005)
+            }
+          } else {
+            // Satellite in Core-First mode
+            if (stocksIsUnder || stocksIsOver) {
+              subIsOk = true
+              subDiff = 0
+              subAbsDiff = 0
+              devLabel = '(Halten)'
+            } else if (coreSub && coreSub.value > 0) {
+              const targetRatioToCore = sa.targetPercentage / coreSub.targetPercentage
+              const actualRatioToCore = sa.value / coreSub.value
+              subTargetValue = coreSub.value * targetRatioToCore
+              subDiff = subTargetValue - sa.value
+              subAbsDiff = Math.abs(subDiff)
+              subIsOk = subAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
+              subDev = actualRatioToCore - targetRatioToCore
+              devLabel = `(${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% Core)`
+            }
+          }
+        }
 
         if (y > 175) {
           doc.addPage([108, 192])
@@ -336,15 +401,19 @@ export function generateMobileRebalancePDF(
         doc.setTextColor(80, 80, 80)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(8)
-        doc.text(sa.subcategory, 15, y)
+        const subDisplayName = isThisCore ? `${sa.subcategory} [Anker]` : sa.subcategory
+        doc.text(subDisplayName, 15, y)
 
         doc.setTextColor(130, 130, 130)
-        doc.setFontSize(7.5)
-        doc.text(`(${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}%)`, 42, y)
+        doc.setFontSize(7)
+        doc.text(devLabel, 44, y)
 
         let subText = 'On Target'
         let subColor = [100, 100, 100]
-        if (!subIsOk) {
+        if (hasCoreRef && !isThisCore && !stocksIsOk) {
+          subText = 'Halten'
+          subColor = [120, 120, 120]
+        } else if (!subIsOk) {
           if (subDiff > 0) {
             subText = `Buy ${fmtEur(subAbsDiff)}`
             subColor = [39, 174, 96]

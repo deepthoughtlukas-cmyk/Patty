@@ -28,10 +28,10 @@ export const DEFAULT_PROFILE: TargetProfile = {
   },
   subWeights: {
     'Stocks': [
-      { name: 'AI', weight: 0.30 },
-      { name: 'Defence', weight: 0.25 },
+      { name: 'Core', weight: 0.50 },
+      { name: 'AI', weight: 0.20 },
+      { name: 'Defence', weight: 0.20 },
       { name: 'Real Estate', weight: 0.10 },
-      { name: 'General', weight: 0.35 },
     ],
     'Commodities': [
       { name: 'Metals', weight: 0.30 },

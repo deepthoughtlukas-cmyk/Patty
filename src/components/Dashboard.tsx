@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera, SlidersHorizontal } from 'lucide-react'
 import { toJpeg } from 'html-to-image'
 import download from 'downloadjs'
 import type { Investment, AssetCategory } from '../utils/parser'
@@ -227,6 +227,14 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const [importMsg, setImportMsg] = useState<string | null>(null)
   const [dataModalOpen, setDataModalOpen] = useState(false)
   const [brokerVersion, setBrokerVersion] = useState(0)
+  const [rebalanceMethod, setRebalanceMethod] = useState<'core-first' | 'standard'>(() => {
+    return (localStorage.getItem('patty-rebalance-method') as 'core-first' | 'standard') || 'core-first'
+  })
+
+  const handleToggleRebalanceMethod = (method: 'core-first' | 'standard') => {
+    setRebalanceMethod(method)
+    localStorage.setItem('patty-rebalance-method', method)
+  }
 
   // Build broker availability map (recomputes when investments or overrides change)
   const brokerAvailMap = buildAvailabilityMap(displayInvestments, investmentKey)
@@ -1252,7 +1260,50 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
       {/* Rebalancing Recommendations */}
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-          <span>Rebalancing Recommendations</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span>Rebalancing Recommendations</span>
+            {/* Method Slider Switch */}
+            <div 
+              className="rebalance-method-slider-box" 
+              title="Rebalancing-Methode über Schieberegler umschalten:&#10;• Core-First (2-Stufen): Priorisiert Core-Zukäufe bei untergewichtetem Stocks; hält Satelliten bis Stocks im Zielbereich liegt.&#10;• Standard (Parallel): Rebalanced alle Subkategorien unabhängig und parallel."
+            >
+              <SlidersHorizontal size={13} color="var(--text-muted)" style={{ marginLeft: 2 }} />
+              <button
+                type="button"
+                className={`rebalance-slider-btn core-first ${rebalanceMethod === 'core-first' ? 'active' : ''}`}
+                onClick={() => handleToggleRebalanceMethod('core-first')}
+                title="Modus aktivieren: Core-First (2-Stufen)"
+              >
+                Core-First (2-Stufen)
+              </button>
+
+              <div
+                role="slider"
+                aria-label="Rebalancing Methode Schieberegler"
+                aria-valuenow={rebalanceMethod === 'core-first' ? 0 : 1}
+                aria-valuetext={rebalanceMethod === 'core-first' ? 'Core-First (2-Stufen)' : 'Standard (Parallel)'}
+                tabIndex={0}
+                className={`rebalance-slider-track ${rebalanceMethod}`}
+                onClick={() => handleToggleRebalanceMethod(rebalanceMethod === 'core-first' ? 'standard' : 'core-first')}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') handleToggleRebalanceMethod('core-first');
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter') handleToggleRebalanceMethod('standard');
+                }}
+                title="Schieberegler anklicken oder Pfeiltasten zum Umschalten"
+              >
+                <div className="rebalance-slider-thumb" />
+              </div>
+
+              <button
+                type="button"
+                className={`rebalance-slider-btn standard ${rebalanceMethod === 'standard' ? 'active' : ''}`}
+                onClick={() => handleToggleRebalanceMethod('standard')}
+                title="Modus aktivieren: Standard (Parallel)"
+              >
+                Standard (Parallel)
+              </button>
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               className="btn btn-sm btn-ghost"
@@ -1277,19 +1328,49 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             const targetValue = totalValue * a.targetPercentage
             const diff = targetValue - a.value
             const absDiff = Math.abs(diff)
-            const isOk = absDiff < totalValue * 0.01
+            const catTolerance = totalValue * 0.0025
+            const isOk = absDiff < catTolerance
             const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
             const hasMultipleSubs = subAlloc.length > 1
             const rebalSubKey = `rebal::${a.category}`
             const rebalSubVisible = !collapsed[rebalSubKey]
 
+            // Check if Core reference is active for Stocks
+            const isStocks = a.category === 'Stocks'
+            const coreSub = isStocks ? subAlloc.find((sa) => sa.subcategory.toLowerCase() === 'core') : undefined
+            const hasCoreReference = isStocks && rebalanceMethod === 'core-first' && !!coreSub && coreSub.targetPercentage > 0
+            const stocksIsOk = isOk
+            const stocksIsUnder = diff > catTolerance
+            const stocksIsOver = diff < -catTolerance
+
+            // In Core-First Stage 2 (Stocks is on target), precompute satellite diffs so Core can absorb them
+            let coreStage2NetDiff = 0
+            if (hasCoreReference && coreSub && coreSub.value > 0 && stocksIsOk) {
+              subAlloc.forEach((sa) => {
+                if (sa.subcategory.toLowerCase() !== 'core') {
+                  const targetRatio = sa.targetPercentage / coreSub.targetPercentage
+                  const subTargetVal = coreSub.value * targetRatio
+                  const sDiff = subTargetVal - sa.value
+                  const sAbsDiff = Math.abs(sDiff)
+                  const sOk = sAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
+                  if (!sOk) {
+                    coreStage2NetDiff -= sDiff
+                  }
+                }
+              })
+            }
+
             let actionText = ''
             if (isOk) {
               actionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
             } else if (diff > 0) {
-              actionText = `Empfehlung: KAUFEN +${fmtEur(absDiff)}`
+              actionText = hasCoreReference
+                ? `Empfehlung: KAUFEN +${fmtEur(absDiff)} (in Core)`
+                : `Empfehlung: KAUFEN +${fmtEur(absDiff)}`
             } else {
-              actionText = `Empfehlung: VERKAUFEN -${fmtEur(absDiff)}`
+              actionText = hasCoreReference
+                ? `Empfehlung: VERKAUFEN -${fmtEur(absDiff)} (aus Core)`
+                : `Empfehlung: VERKAUFEN -${fmtEur(absDiff)}`
             }
 
             const catTooltipLines = [
@@ -1299,6 +1380,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
               `• Soll-Wert: ${fmtEur(targetValue)} (${(a.targetPercentage * 100).toFixed(1)}% des Portfolios)`,
               `• Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)}% (${diff >= 0 ? '+' : ''}${fmtEur(diff)})`,
             ]
+
+            if (hasCoreReference && coreSub) {
+              catTooltipLines.push(
+                `• Referenz-Modell: Core-First (2-Stufen)`,
+                `• Core: ${fmtEur(coreSub.value)} Ist-Wert, ${(coreSub.targetPercentage * 100).toFixed(0)}% Ziel-Gewichtung in Stocks`
+              )
+            }
 
             if (a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0) {
               const ozExact = (absDiff / goldOzPrice).toFixed(2)
@@ -1335,11 +1423,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     </span>
                   ) : diff > 0 ? (
                     <span className="rebalance-badge buy">
-                      <TrendingUp size={10} style={{ marginRight: 4 }} />Buy {fmtEur(absDiff)}
+                      <TrendingUp size={10} style={{ marginRight: 4 }} />Buy {hasCoreReference ? 'Core ' : ''}{fmtEur(absDiff)}
                     </span>
                   ) : (
                     <span className="rebalance-badge sell">
-                      <TrendingDown size={10} style={{ marginRight: 4 }} />Sell {fmtEur(absDiff)}
+                      <TrendingDown size={10} style={{ marginRight: 4 }} />Sell {hasCoreReference ? 'Core ' : ''}{fmtEur(absDiff)}
                     </span>
                   )}
                   {/* Philharmoniker coin indicator for Safe-Haven Gold */}
@@ -1359,36 +1447,133 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     {[...subAlloc]
                       .filter((sa) => sa.targetPercentage > 0)
                       .sort((x, y) => {
+                        if (hasCoreReference) {
+                          const xIsCore = x.subcategory.toLowerCase() === 'core'
+                          const yIsCore = y.subcategory.toLowerCase() === 'core'
+                          if (xIsCore) return -1
+                          if (yIsCore) return 1
+                        }
                         const xDev = (a.percentage * x.percentage) - (a.targetPercentage * x.targetPercentage)
                         const yDev = (a.percentage * y.percentage) - (a.targetPercentage * y.targetPercentage)
                         return yDev - xDev
                       })
                       .map((sa) => {
-                      // Absolute target for this subcategory = category target * sub-target within category
+                      const isThisCore = hasCoreReference && sa.subcategory.toLowerCase() === 'core'
                       const subAbsTarget = a.targetPercentage * sa.targetPercentage
                       const subActualAbs = a.percentage * sa.percentage
-                      const subTargetValue = totalValue * subAbsTarget
-                      const subDiff = subTargetValue - sa.value
-                      const subAbsDiff = Math.abs(subDiff)
-                      const subIsOk = subAbsDiff < totalValue * 0.005
-                      const subDev = subActualAbs - subAbsTarget
+
+                      let subTargetValue = totalValue * subAbsTarget
+                      let subDiff = subTargetValue - sa.value
+                      let subAbsDiff = Math.abs(subDiff)
+                      let subIsOk = subAbsDiff < totalValue * 0.005
+                      let subDev = subActualAbs - subAbsTarget
+                      let targetRatioToCore = 0
+                      let actualRatioToCore = 0
+                      let ratioDev = 0
+
+                      if (hasCoreReference) {
+                        if (isThisCore) {
+                          if (stocksIsUnder) {
+                            // Stage 1: Stocks is underweight -> Core absorbs entire category deficit
+                            subDiff = absDiff
+                            subAbsDiff = absDiff
+                            subTargetValue = sa.value + absDiff
+                            subIsOk = false
+                            subDev = subActualAbs - subAbsTarget
+                          } else if (stocksIsOver) {
+                            // Stage 1: Stocks is overweight -> Core absorbs entire category surplus
+                            subDiff = -absDiff
+                            subAbsDiff = absDiff
+                            subTargetValue = Math.max(0, sa.value - absDiff)
+                            subIsOk = false
+                            subDev = subActualAbs - subAbsTarget
+                          } else {
+                            // Stage 2: Stocks is in target range -> Core absorbs net satellite adjustments
+                            subDiff = coreStage2NetDiff
+                            subAbsDiff = Math.abs(subDiff)
+                            subTargetValue = sa.value + subDiff
+                            subIsOk = subAbsDiff < Math.max(coreSub ? coreSub.value * 0.02 : 0, totalValue * 0.005)
+                            subDev = subActualAbs - subAbsTarget
+                          }
+                        } else {
+                          // Satellites in Core-First mode
+                          if (stocksIsUnder || stocksIsOver) {
+                            // Stage 1: Stocks is not balanced compared to Gold/Bonds yet. Satellites are HELD.
+                            subIsOk = true
+                            subDiff = 0
+                            subAbsDiff = 0
+                            subDev = subActualAbs - subAbsTarget
+                          } else if (coreSub && coreSub.value > 0) {
+                            // Stage 2: Stocks is in target range! Now rebalance satellites relative to Core.
+                            targetRatioToCore = sa.targetPercentage / coreSub.targetPercentage
+                            actualRatioToCore = sa.value / coreSub.value
+                            subTargetValue = coreSub.value * targetRatioToCore
+                            subDiff = subTargetValue - sa.value
+                            subAbsDiff = Math.abs(subDiff)
+                            ratioDev = actualRatioToCore - targetRatioToCore
+                            subDev = ratioDev
+                            subIsOk = subAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
+                          }
+                        }
+                      }
 
                       let subActionText = ''
                       if (subIsOk) {
-                        subActionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
+                        if (hasCoreReference && !isThisCore && !stocksIsOk) {
+                          subActionText = `Empfehlung: Halten (Nachgelagert – Zuerst muss Stocks über Core das Zielgewicht von ${(a.targetPercentage * 100).toFixed(0)}% erreichen)`
+                        } else {
+                          subActionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
+                        }
                       } else if (subDiff > 0) {
-                        subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)}`
+                        if (hasCoreReference && isThisCore) {
+                          subActionText = stocksIsUnder
+                            ? `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (Basisaufbau für Stocks auf ${(a.targetPercentage * 100).toFixed(0)}%)`
+                            : `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (finanziert aus Satelliten-Gewinnmitnahme)`
+                        } else if (hasCoreReference && !isThisCore) {
+                          subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (finanziert aus Core)`
+                        } else {
+                          subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)}`
+                        }
                       } else {
-                        subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)}`
+                        if (hasCoreReference && isThisCore) {
+                          subActionText = stocksIsOver
+                            ? `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (Gewinnmitnahme aus Core)`
+                            : `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (zur Finanzierung untergewichteter Satelliten)`
+                        } else if (hasCoreReference && !isThisCore) {
+                          subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (in Core umschichten)`
+                        } else {
+                          subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)}`
+                        }
                       }
 
                       const subTooltipLines = [
-                        `${sa.subcategory} (${a.category}) - Rebalancing Empfehlung`,
+                        `${sa.subcategory} (${a.category}) - Rebalancing Empfehlung${isThisCore ? ' [Referenz-Anker]' : hasCoreReference ? ' [Core-First]' : ''}`,
                         subActionText,
-                        `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von ${a.category})`,
-                        `• Soll-Wert: ${fmtEur(subTargetValue)} (${(subAbsTarget * 100).toFixed(1)}% Portfolio / ${(sa.targetPercentage * 100).toFixed(0)}% von ${a.category})`,
-                        `• Abweichung: ${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`,
                       ]
+
+                      if (hasCoreReference && !isThisCore) {
+                        if (!stocksIsOk) {
+                          subTooltipLines.push(
+                            `• Status: Halten (Nachgelagert – Core-Zukauf hat Priorität)`,
+                            `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von Stocks)`,
+                            `• Langfristiger Soll-Wert bei ${(a.targetPercentage * 100).toFixed(0)}% Stocks: ${fmtEur(totalValue * a.targetPercentage * sa.targetPercentage)}`,
+                            `• Hinweis: Satelliten-Anpassung greift erst, wenn Stocks im Zielbereich liegt.`
+                          )
+                        } else if (coreSub && coreSub.value > 0) {
+                          subTooltipLines.push(
+                            `• Ist-Wert: ${fmtEur(sa.value)} (${(actualRatioToCore * 100).toFixed(1)}% von Core)`,
+                            `• Soll-Wert: ${fmtEur(subTargetValue)} (${(targetRatioToCore * 100).toFixed(1)}% von Core: ${fmtEur(coreSub.value)})`,
+                            `• Abweichung zu Core: ${ratioDev >= 0 ? '+' : ''}${(ratioDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`,
+                            `• Portfolio-Anteil: ${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
+                          )
+                        }
+                      } else {
+                        subTooltipLines.push(
+                          `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von ${a.category})`,
+                          `• Soll-Wert: ${fmtEur(subTargetValue)} (${(subAbsTarget * 100).toFixed(1)}% Portfolio / ${(sa.targetPercentage * 100).toFixed(0)}% von ${a.category})`,
+                          `• Abweichung: ${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`
+                        )
+                      }
 
                       if (sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0) {
                         const ozExact = (subAbsDiff / SILVER_OZ_PRICE_EUR).toFixed(1)
@@ -1405,13 +1590,32 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                       return (
                         <div className="rebalance-item sub-rebalance-item" key={sa.subcategory} title={subTooltipStr}>
                           <span className="sub-alloc-dot" style={{ background: sa.color }} />
-                          <span className="rebalance-item-name sub-rebalance-name">{sa.subcategory}</span>
+                          <span className="rebalance-item-name sub-rebalance-name">
+                            {sa.subcategory}
+                            {isThisCore && (
+                              <span style={{
+                                marginLeft: 6,
+                                fontSize: '0.66rem',
+                                padding: '1px 5px',
+                                borderRadius: 4,
+                                background: 'rgba(240, 192, 64, 0.15)',
+                                color: 'var(--gold)',
+                                border: '1px solid rgba(240, 192, 64, 0.3)',
+                                fontWeight: 700,
+                                letterSpacing: '0.02em',
+                                verticalAlign: 'middle'
+                              }}>
+                                Anker
+                              </span>
+                            )}
+                          </span>
                           <span className="rebalance-deviation">
                             {subDev >= 0 ? '+' : ''}{(subDev * 100).toFixed(1)} %
                           </span>
                           {subIsOk ? (
                             <span className="rebalance-badge ok" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                              <Minus size={9} style={{ marginRight: 3 }} />OK
+                              <Minus size={9} style={{ marginRight: 3 }} />
+                              {hasCoreReference && !isThisCore && !stocksIsOk ? 'Halten' : 'OK'}
                             </span>
                           ) : subDiff > 0 ? (
                             <span className="rebalance-badge buy" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
@@ -1429,7 +1633,15 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                             </span>
                           )}
                           <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                            {(subActualAbs * 100).toFixed(1)}% / {(subAbsTarget * 100).toFixed(1)}% Portfolio
+                            {hasCoreReference && !isThisCore && coreSub && coreSub.value > 0 ? (
+                              stocksIsOk ? (
+                                `${(actualRatioToCore * 100).toFixed(0)}% / ${(targetRatioToCore * 100).toFixed(0)}% Core`
+                              ) : (
+                                `${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
+                              )
+                            ) : (
+                              `${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
+                            )}
                           </span>
                         </div>
                       )
@@ -1885,7 +2097,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             </button>
             <button
               className="btn btn-sm btn-ghost"
-              onClick={() => generateMobileRebalancePDF(displayInvestments, allocation, activeSubWeights, goldOzPrice, SILVER_OZ_PRICE_EUR)}
+              onClick={() => generateMobileRebalancePDF(displayInvestments, allocation, activeSubWeights, goldOzPrice, SILVER_OZ_PRICE_EUR, rebalanceMethod)}
               title="Smartphone Rebalancing PDF herunterladen"
             >
               <Smartphone size={13} /> Mobile Rebalancing

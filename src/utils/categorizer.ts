@@ -33,7 +33,7 @@ export const ALL_CATEGORIES: AssetCategory[] = [
 
 // Default subcategories per main category
 export const DEFAULT_SUBCATEGORIES: Record<AssetCategory, string[]> = {
-  'Stocks': ['AI', 'Defence', 'Real Estate', 'General'],
+  'Stocks': ['Core', 'AI', 'Defence', 'Real Estate', 'General'],
   'Bonds': ['General'],
   'Safe-Haven Gold': ['General'],
   'Performance Gold': ['Goldminen', 'Silber', 'Silberminen', 'General'],
@@ -45,6 +45,7 @@ export const DEFAULT_SUBCATEGORIES: Record<AssetCategory, string[]> = {
 // Subcategory color shades — derived from parent category for visual cohesion
 export const SUBCATEGORY_COLORS: Record<string, string> = {
   // Stocks (parent: #60a5fa blue) — light to deep blue
+  'Core': '#60a5fa',
   'AI': '#93c5fd',
   'Defence': '#3b82f6',
   'Real Estate': '#2563eb',
@@ -161,6 +162,7 @@ export function autoSubcategory(inv: Investment): string {
     if (containsAny(combined, SUB_STOCK_DEFENCE)) return 'Defence'
     if (containsAny(combined, SUB_STOCK_AI)) return 'AI'
     if (containsAny(combined, SUB_STOCK_REALESTATE)) return 'Real Estate'
+    if (containsAny(combined, ['core', 'all-world', 'all world', 'msci world', 'acwi', 's&p 500', 'ftse all'])) return 'Core'
   }
 
   if (inv.category === 'Altcoins') {
