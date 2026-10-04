@@ -22,6 +22,10 @@ export interface WorkspaceExport {
   excludedAssetKeys?: string[]
   excludedCategories?: string[]
   collapsedStates?: Record<string, boolean>
+  coreCustomProfiles?: any[]
+  coreRoles?: Record<string, string>
+  coreTarget?: string
+  coreSparplanConfig?: any
 }
 
 const KEYS = {
@@ -38,6 +42,10 @@ const KEYS = {
   EXCLUDED_ASSET_KEYS: 'patty-dim-excluded-assets',
   EXCLUDED_CATEGORIES: 'patty-dim-excluded-categories',
   COLLAPSED_STATES: 'patty-collapsed-states',
+  CORE_CUSTOM_PROFILES: 'patty-core-custom-profiles',
+  CORE_ROLES: 'patty-core-roles',
+  CORE_TARGET: 'patty-core-target',
+  CORE_SPARPLAN_CONFIG: 'patty-core-sparplan-config',
 }
 
 function getJSON<T>(key: string, parseFallback: any = null): T | null {
@@ -68,6 +76,10 @@ export function exportWorkspace(pin?: string): void {
     excludedAssetKeys: getJSON<string[]>(KEYS.EXCLUDED_ASSET_KEYS, []),
     excludedCategories: getJSON<string[]>(KEYS.EXCLUDED_CATEGORIES, []),
     collapsedStates: getJSON<Record<string, boolean>>(KEYS.COLLAPSED_STATES, {}),
+    coreCustomProfiles: getJSON<any[]>(KEYS.CORE_CUSTOM_PROFILES, []),
+    coreRoles: getJSON<Record<string, string>>(KEYS.CORE_ROLES, {}),
+    coreTarget: localStorage.getItem(KEYS.CORE_TARGET) || '',
+    coreSparplanConfig: getJSON<any>(KEYS.CORE_SPARPLAN_CONFIG, null),
   }
 
   let content = JSON.stringify(data, null, 2)
@@ -172,6 +184,22 @@ export function importWorkspace(file: File, pin?: string): Promise<void> {
 
         if (data.collapsedStates) {
           localStorage.setItem(KEYS.COLLAPSED_STATES, JSON.stringify(data.collapsedStates))
+        }
+
+        if (data.coreCustomProfiles) {
+          localStorage.setItem(KEYS.CORE_CUSTOM_PROFILES, JSON.stringify(data.coreCustomProfiles))
+        }
+
+        if (data.coreRoles) {
+          localStorage.setItem(KEYS.CORE_ROLES, JSON.stringify(data.coreRoles))
+        }
+
+        if (data.coreTarget) {
+          localStorage.setItem(KEYS.CORE_TARGET, data.coreTarget)
+        }
+
+        if (data.coreSparplanConfig) {
+          localStorage.setItem(KEYS.CORE_SPARPLAN_CONFIG, JSON.stringify(data.coreSparplanConfig))
         }
 
         resolve()

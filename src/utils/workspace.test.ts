@@ -53,4 +53,27 @@ describe('Workspace AES Encryption', () => {
     
     await expect(importWorkspace(file, '999999')).rejects.toThrow('Falscher PIN oder ungültige/beschädigte Datei')
   })
+
+  it('exports and restores coreSparplanConfig during plain JSON import', async () => {
+    const mockSparplanConfig = {
+      monthlyBudget: 400,
+      selectedKeys: ['pos-avantis-em', 'pos-avantis-sc'],
+      customAmounts: { 'pos-avantis-em': 200, 'pos-avantis-sc': 200 },
+      projectionHorizon: 36,
+      maxPositions: 4,
+    }
+    const rawData = {
+      version: 1,
+      investments: [],
+      coreSparplanConfig: mockSparplanConfig,
+    }
+
+    const file = new File([JSON.stringify(rawData)], 'workspace.json', { type: 'application/json' })
+    await expect(importWorkspace(file)).resolves.not.toThrow()
+
+    const stored = JSON.parse(localStorage.getItem('patty-core-sparplan-config') || '{}')
+    expect(stored.monthlyBudget).toBe(400)
+    expect(stored.selectedKeys).toEqual(['pos-avantis-em', 'pos-avantis-sc'])
+    expect(stored.customAmounts).toEqual({ 'pos-avantis-em': 200, 'pos-avantis-sc': 200 })
+  })
 })

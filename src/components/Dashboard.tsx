@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera, SlidersHorizontal } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera, SlidersHorizontal, Target } from 'lucide-react'
 import { toJpeg } from 'html-to-image'
 import download from 'downloadjs'
 import type { Investment, AssetCategory } from '../utils/parser'
@@ -54,6 +54,7 @@ import { generatePDF, generateMobileRebalancePDF } from '../utils/pdfGenerator'
 import { loadDepositories, setDepository, bulkSetDepository, loadDepositoryList, saveDepositoryList, saveDepositories } from '../utils/depositories'
 import { applySplits, loadSplits, setSplitConfig, deleteSplitConfig, getSplitInvestmentKey, type AssetSplitConfig, type CoinSplit } from '../utils/assetSplits'
 import DataManagementModal from './DataManagementModal'
+import { CoreDashboardTab } from './core/CoreDashboardTab'
 
 interface DashboardProps {
   investments: Investment[]
@@ -268,8 +269,8 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const [showNewProfile, setShowNewProfile] = useState(false)
   const [newSubName, setNewSubName] = useState<Record<string, string>>({})
 
-  // Tab state: 'allocation' or 'dimensions'
-  const [activeTab, setActiveTab] = useState<'allocation' | 'dimensions'>('allocation')
+  // Tab state: 'allocation', 'dimensions' or 'core'
+  const [activeTab, setActiveTab] = useState<'allocation' | 'dimensions' | 'core'>('allocation')
 
   // Dimension state
   const [dimensions, setDimensions] = useState<Dimension[]>(() => loadDimensions())
@@ -749,6 +750,14 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   const allocation = computeAllocation(activeInvestments, activeWeights)
 
+  const suggestedCoreBuy = useMemo(() => {
+    const stocksAlloc = allocation.find((a) => a.category === 'Stocks')
+    if (!stocksAlloc) return 0
+    const targetVal = totalValue * stocksAlloc.targetPercentage
+    const diff = targetVal - stocksAlloc.value
+    return diff > totalValue * 0.0025 ? Math.round(diff) : 0
+  }, [allocation, totalValue])
+
   // Extract gold price per gram from ETF and calculate 1 oz Philharmoniker price
   // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
   const TROY_OZ_IN_GRAMS = 31.1035
@@ -929,6 +938,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
         >
           <Layers size={14} className="tab-icon" />
           Dimensionen
+        </button>
+        <button
+          className={`alloc-tab${activeTab === 'core' ? ' active' : ''}`}
+          onClick={() => setActiveTab('core')}
+        >
+          <Target size={14} className="tab-icon" />
+          Core Steuerung
         </button>
       </div>
 
@@ -1989,6 +2005,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             </div>
           )}
         </div>
+      )}
+
+      {activeTab === 'core' && (
+        <CoreDashboardTab
+          investments={displayInvestments}
+          suggestedCoreBuy={suggestedCoreBuy}
+        />
       )}
 
       {/* Holdings Table grouped by category */}
