@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, RotateCcw, ShieldCheck, Target } from 'luc
 import type { CoreExposure, TargetStage } from '../../utils/core/types'
 import type { CoreFitSummary } from '../../utils/core/coreExposure'
 import { FACTOR_BUDGET_CAP, TARGET_STAGES } from '../../utils/core/targets'
+import { fmtEur as fmtEurShared, fmtPct } from '../../shared/lib/format'
 
 interface CoreKpiHeaderProps {
   exposure: CoreExposure
@@ -19,11 +20,7 @@ interface CoreKpiHeaderProps {
 }
 
 function fmtEur(v: number): string {
-  return `€ ${v.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-}
-
-function fmtPct(v: number, digits = 1): string {
-  return `${(v * 100).toFixed(digits)} %`
+  return fmtEurShared(v, 0)
 }
 
 export const CoreKpiHeader: React.FC<CoreKpiHeaderProps> = ({

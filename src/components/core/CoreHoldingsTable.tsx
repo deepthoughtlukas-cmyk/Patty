@@ -1,16 +1,13 @@
 import React from 'react'
 import { Eye, HelpCircle } from 'lucide-react'
 import type { CorePosition, CoreProfile, CoreRole } from '../../utils/core/types'
+import { fmtEur } from '../../shared/lib/format'
 
 interface CoreHoldingsTableProps {
   positions: CorePosition[]
   totalValue: number
   onRoleChange: (profileId: string, role: CoreRole) => void
   onInspectProfile: (profile: CoreProfile) => void
-}
-
-function fmtEur(v: number): string {
-  return `€ ${v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export const CoreHoldingsTable: React.FC<CoreHoldingsTableProps> = ({

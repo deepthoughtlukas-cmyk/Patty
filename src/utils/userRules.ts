@@ -215,13 +215,17 @@ export function importRulesFromFile(file: File): Promise<number> {
           }
           if (imported.depositoryList) {
             const currentList = new Set(loadDepositoryList())
-            imported.depositoryList.forEach((d: string) => currentList.add(d))
+            imported.depositoryList.forEach((d: string) => {
+              currentList.add(d)
+            })
             saveDepositoryList(Array.from(currentList))
           }
           if (imported.splits) {
             // Merge or overwrite? Let's overwrite for simplicity or merge by assetKey
             const existingSplits = new Map(loadSplits().map(s => [s.assetKey, s]))
-            imported.splits.forEach((s: AssetSplitConfig) => existingSplits.set(s.assetKey, s))
+            imported.splits.forEach((s: AssetSplitConfig) => {
+              existingSplits.set(s.assetKey, s)
+            })
             saveSplits(Array.from(existingSplits.values()))
           }
         } else {

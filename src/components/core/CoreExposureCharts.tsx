@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowUpRight, Check } from 'lucide-react'
 import type { CoreExposure, RegionKey, TargetStage } from '../../utils/core/types'
 import { ALL_FACTORS, ALL_REGIONS, countryName, FACTOR_LABELS, REGION_LABELS, regionOf } from '../../utils/core/countries'
 import { FACTOR_BUDGET_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
+import { fmtEurSigned } from '../../shared/lib/format'
 
 export type ScenarioViewMode = 'now' | 'plan12m' | 'target' | 'sim'
 
@@ -39,11 +40,6 @@ const CURRENCY_COLORS: Record<string, string> = {
   INR: '#fbbf24',
   KRW: '#c084fc',
   Übrige: '#8b90a0',
-}
-
-function fmtEurSigned(v: number): string {
-  const abs = Math.abs(Math.round(v)).toLocaleString('de-DE')
-  return `${v >= 0 ? '+' : '-'}€ ${abs}`
 }
 
 function classifyFactorTilt(score: number): { label: string; tone: 'high' | 'mid' | 'low' | 'neutral' } {

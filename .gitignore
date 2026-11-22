@@ -25,5 +25,6 @@ coverage/
 !tsconfig.json
 !tsconfig.node.json
 !tsconfig.app.json
+!biome.json
 .env*
 test-crypto.js

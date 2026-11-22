@@ -3,18 +3,11 @@ import autoTable from 'jspdf-autotable'
 import type { Investment } from './parser'
 import { investmentKey } from './userRules'
 import type { DepositoryMap } from './depositories'
-import { computeSubAllocation } from './categorizer'
+import type { AllocationSummary, SubWeight } from './categorizer'
+import { fmtEur } from '../shared/lib/format'
+import { computeRebalancePlan, type RebalanceMethod } from '../domain/rebalancing/rebalanceEngine'
 
-function fmt(value: number, digits = 2): string {
-  return value.toLocaleString('de-DE', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
-}
-
-function fmtEur(value: number): string {
-  return `€ ${fmt(value)}`
-}
+type JsPDFWithAutoTable = jsPDF & { lastAutoTable: { finalY: number } }
 
 export function generatePDF(investments: Investment[], depositories: DepositoryMap) {
   const doc = new jsPDF()
@@ -172,7 +165,7 @@ export function generatePDF(investments: Investment[], depositories: DepositoryM
         headStyles: { fillColor: [41, 128, 185] },
       })
 
-      currentY = (doc as any).lastAutoTable.finalY
+      currentY = (doc as JsPDFWithAutoTable).lastAutoTable.finalY
     }
   })
 
@@ -181,11 +174,11 @@ export function generatePDF(investments: Investment[], depositories: DepositoryM
 
 export function generateMobileRebalancePDF(
   investments: Investment[],
-  allocation: any[],
-  activeSubWeights: Record<string, any[]>,
+  allocation: AllocationSummary[],
+  activeSubWeights: Record<string, SubWeight[]>,
   goldOzPrice: number,
   silverOzPrice: number,
-  rebalanceMethod: 'core-first' | 'standard' = 'core-first'
+  rebalanceMethod: RebalanceMethod = 'core-first'
 ) {
   // Page size: 108mm x 192mm (9:16 portrait)
   const doc = new jsPDF({
@@ -196,9 +189,19 @@ export function generateMobileRebalancePDF(
 
   const activeInvestments = investments.filter(inv => inv.currentValue > 0)
   const totalValue = activeInvestments.reduce((sum, inv) => sum + inv.currentValue, 0)
+  const rebalancePlan = computeRebalancePlan({
+    activeInvestments,
+    allocation,
+    activeSubWeights,
+    totalValue,
+    goldOzPrice,
+    silverOzPrice,
+    rebalanceMethod,
+    sortByDeviationDesc: false,
+  })
 
   // Draw Header
-  const drawHeader = (pageNum: number) => {
+  const drawHeader = (_pageNum: number) => {
     doc.setFillColor(26, 30, 42) // Dark card bg
     doc.rect(0, 0, 108, 16, 'F')
     
@@ -243,13 +246,7 @@ export function generateMobileRebalancePDF(
   y += 22
 
   // Categories list
-  allocation.forEach((a) => {
-    const targetValue = totalValue * a.targetPercentage
-    const diff = targetValue - a.value
-    const absDiff = Math.abs(diff)
-    const catTolerance = totalValue * 0.0025
-    const isOk = absDiff < catTolerance
-
+  rebalancePlan.forEach((catPlan) => {
     if (y > 165) {
       doc.addPage([108, 192])
       pageCount++
@@ -258,9 +255,9 @@ export function generateMobileRebalancePDF(
     }
 
     // Category Card Top
-    const rHex = parseInt(a.color.slice(1, 3), 16) || 100
-    const gHex = parseInt(a.color.slice(3, 5), 16) || 100
-    const bHex = parseInt(a.color.slice(5, 7), 16) || 100
+    const rHex = parseInt(catPlan.color.slice(1, 3), 16) || 100
+    const gHex = parseInt(catPlan.color.slice(3, 5), 16) || 100
+    const bHex = parseInt(catPlan.color.slice(5, 7), 16) || 100
 
     doc.setFillColor(rHex, gHex, bHex)
     doc.circle(10, y - 1, 1.5, 'F')
@@ -268,52 +265,20 @@ export function generateMobileRebalancePDF(
     doc.setTextColor(20, 20, 20)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
-    doc.text(a.category, 14, y)
+    doc.text(catPlan.category, 14, y)
     
     // Deviation text
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8.5)
     doc.setTextColor(110, 110, 110)
-    doc.text(`Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)} %`, 14, y + 4)
+    doc.text(`Abweichung: ${catPlan.deviation >= 0 ? '+' : ''}${(catPlan.deviation * 100).toFixed(1)} %`, 14, y + 4)
 
-    const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
-    const isStocks = a.category === 'Stocks'
-    const coreSub = isStocks ? subAlloc.find(sa => sa.subcategory.toLowerCase() === 'core') : undefined
-    const hasCoreRef = isStocks && rebalanceMethod === 'core-first' && !!coreSub && coreSub.targetPercentage > 0
-    const stocksIsOk = isOk
-    const stocksIsUnder = diff > catTolerance
-    const stocksIsOver = diff < -catTolerance
-
-    // In Core-First Stage 2 (Stocks is on target), precompute satellite diffs so Core can absorb them
-    let coreStage2NetDiff = 0
-    if (hasCoreRef && coreSub && coreSub.value > 0 && stocksIsOk) {
-      subAlloc.forEach((sa) => {
-        if (sa.subcategory.toLowerCase() !== 'core') {
-          const targetRatio = sa.targetPercentage / coreSub.targetPercentage
-          const subTargetVal = coreSub.value * targetRatio
-          const sDiff = subTargetVal - sa.value
-          const sAbsDiff = Math.abs(sDiff)
-          const sOk = sAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
-          if (!sOk) {
-            coreStage2NetDiff -= sDiff
-          }
-        }
-      })
-    }
-
-    // Recommendation Badge / Text
-    let badgeText = ''
-    let badgeColor: [number, number, number] = [120, 120, 120]
-    if (isOk) {
-      badgeText = 'On Target'
-      badgeColor = [46, 117, 89]
-    } else if (diff > 0) {
-      badgeText = hasCoreRef ? `BUY Core ${fmtEur(absDiff)}` : `BUY ${fmtEur(absDiff)}`
-      badgeColor = [39, 174, 96]
-    } else {
-      badgeText = hasCoreRef ? `SELL Core ${fmtEur(absDiff)}` : `SELL ${fmtEur(absDiff)}`
-      badgeColor = [192, 57, 43]
-    }
+    const badgeColor: [number, number, number] =
+      catPlan.action === 'ok'
+        ? [46, 117, 89]
+        : catPlan.action === 'buy'
+          ? [39, 174, 96]
+          : [192, 57, 43]
 
     doc.setFillColor(...badgeColor)
     doc.rect(68, y - 3.5, 34, 5.5, 'F')
@@ -321,69 +286,21 @@ export function generateMobileRebalancePDF(
     doc.setTextColor(255, 255, 255)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7)
-    doc.text(badgeText, 85, y + 0.25, { align: 'center' })
+    doc.text(catPlan.pdfBadgeText, 85, y + 0.25, { align: 'center' })
 
-    // If Safe-Haven Gold and need coin
-    if (a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0 && absDiff >= goldOzPrice) {
-      const ozCount = Math.floor(absDiff / goldOzPrice)
-      doc.setTextColor(212, 168, 83) // Gold color
+    if (catPlan.goldCoinCount > 0) {
+      doc.setTextColor(212, 168, 83)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(7.5)
-      doc.text(`Empfehlung: ≥ ${ozCount} oz Gold (${fmtEur(goldOzPrice)}/oz)`, 14, y + 8.5)
+      doc.text(`Empfehlung: ≥ ${catPlan.goldCoinCount} oz Gold (${fmtEur(goldOzPrice)}/oz)`, 14, y + 8.5)
       y += 4.5
     }
 
     y += 10
 
     // Subcategories
-    if (subAlloc.length > 1) {
-      const activeSubs = subAlloc.filter(sa => sa.targetPercentage > 0)
-      activeSubs.forEach((sa) => {
-        const isThisCore = hasCoreRef && sa.subcategory.toLowerCase() === 'core'
-        const subAbsTarget = a.targetPercentage * sa.targetPercentage
-        const subActualAbs = a.percentage * sa.percentage
-        let subTargetValue = totalValue * subAbsTarget
-        let subDiff = subTargetValue - sa.value
-        let subAbsDiff = Math.abs(subDiff)
-        let subIsOk = subAbsDiff < totalValue * 0.005
-        let subDev = subActualAbs - subAbsTarget
-        let devLabel = `(${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}%)`
-
-        if (hasCoreRef) {
-          if (isThisCore) {
-            if (stocksIsUnder) {
-              subDiff = absDiff
-              subAbsDiff = absDiff
-              subIsOk = false
-            } else if (stocksIsOver) {
-              subDiff = -absDiff
-              subAbsDiff = absDiff
-              subIsOk = false
-            } else {
-              subDiff = coreStage2NetDiff
-              subAbsDiff = Math.abs(subDiff)
-              subIsOk = subAbsDiff < Math.max(coreSub ? coreSub.value * 0.02 : 0, totalValue * 0.005)
-            }
-          } else {
-            // Satellite in Core-First mode
-            if (stocksIsUnder || stocksIsOver) {
-              subIsOk = true
-              subDiff = 0
-              subAbsDiff = 0
-              devLabel = '(Halten)'
-            } else if (coreSub && coreSub.value > 0) {
-              const targetRatioToCore = sa.targetPercentage / coreSub.targetPercentage
-              const actualRatioToCore = sa.value / coreSub.value
-              subTargetValue = coreSub.value * targetRatioToCore
-              subDiff = subTargetValue - sa.value
-              subAbsDiff = Math.abs(subDiff)
-              subIsOk = subAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
-              subDev = actualRatioToCore - targetRatioToCore
-              devLabel = `(${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% Core)`
-            }
-          }
-        }
-
+    if (catPlan.subcategories.length > 0) {
+      catPlan.subcategories.forEach((sa) => {
         if (y > 175) {
           doc.addPage([108, 192])
           pageCount++
@@ -401,38 +318,31 @@ export function generateMobileRebalancePDF(
         doc.setTextColor(80, 80, 80)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(8)
-        const subDisplayName = isThisCore ? `${sa.subcategory} [Anker]` : sa.subcategory
+        const subDisplayName = sa.isCoreAnchor ? `${sa.subcategory} [Anker]` : sa.subcategory
         doc.text(subDisplayName, 15, y)
 
         doc.setTextColor(130, 130, 130)
         doc.setFontSize(7)
-        doc.text(devLabel, 44, y)
+        doc.text(sa.devLabel, 44, y)
 
-        let subText = 'On Target'
-        let subColor = [100, 100, 100]
-        if (hasCoreRef && !isThisCore && !stocksIsOk) {
-          subText = 'Halten'
-          subColor = [120, 120, 120]
-        } else if (!subIsOk) {
-          if (subDiff > 0) {
-            subText = `Buy ${fmtEur(subAbsDiff)}`
-            subColor = [39, 174, 96]
-          } else {
-            subText = `Sell ${fmtEur(subAbsDiff)}`
-            subColor = [192, 57, 43]
-          }
-        }
+        const subColor: [number, number, number] =
+          sa.action === 'hold'
+            ? [120, 120, 120]
+            : sa.action === 'ok'
+              ? [100, 100, 100]
+              : sa.action === 'buy'
+                ? [39, 174, 96]
+                : [192, 57, 43]
         
         doc.setFont('helvetica', 'bold')
         doc.setTextColor(...subColor)
-        doc.text(subText, 70, y)
+        doc.text(sa.pdfBadgeText, 70, y)
 
-        if (sa.subcategory === 'Silber' && subDiff > 0 && silverOzPrice > 0 && subAbsDiff >= silverOzPrice) {
-          const ozSilber = Math.floor(subAbsDiff / silverOzPrice)
+        if (sa.silverCoinCount > 0) {
           doc.setTextColor(140, 140, 140)
           doc.setFont('helvetica', 'normal')
           doc.setFontSize(7)
-          doc.text(`Empfehlung: ≥ ${ozSilber} oz Silber (${fmtEur(silverOzPrice)}/oz)`, 15, y + 3.5)
+          doc.text(`Empfehlung: ≥ ${sa.silverCoinCount} oz Silber (${fmtEur(silverOzPrice)}/oz)`, 15, y + 3.5)
           y += 3.5
         }
 

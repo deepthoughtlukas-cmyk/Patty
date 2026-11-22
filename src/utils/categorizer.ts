@@ -247,15 +247,19 @@ export function computeSubAllocation(
   const catTotal = catInvestments.reduce((sum, inv) => sum + inv.currentValue, 0)
 
   // Collect all unique subcategories
-  const subNames = new Set<string>(catInvestments.map((inv) => inv.subcategory))
-  subWeights?.forEach((sw) => subNames.add(sw.name))
+  const subNames = new Set<string>(catInvestments.map((inv) => inv.subcategory || 'General'))
+  subWeights?.forEach((sw) => {
+    subNames.add(sw.name)
+  })
 
   const weightMap = new Map<string, number>()
-  subWeights?.forEach((sw) => weightMap.set(sw.name, sw.weight))
+  subWeights?.forEach((sw) => {
+    weightMap.set(sw.name, sw.weight)
+  })
 
   const allocations = Array.from(subNames).map((sub) => {
     const value = catInvestments
-      .filter((inv) => inv.subcategory === sub)
+      .filter((inv) => (inv.subcategory || 'General') === sub)
       .reduce((sum, inv) => sum + inv.currentValue, 0)
     const percentage = catTotal > 0 ? value / catTotal : 0
     const targetPercentage = weightMap.get(sub) ?? 0

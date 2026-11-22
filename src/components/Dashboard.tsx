@@ -52,9 +52,13 @@ import {
 import { exportWorkspace, importWorkspace } from '../utils/workspace'
 import { generatePDF, generateMobileRebalancePDF } from '../utils/pdfGenerator'
 import { loadDepositories, setDepository, bulkSetDepository, loadDepositoryList, saveDepositoryList, saveDepositories } from '../utils/depositories'
-import { applySplits, loadSplits, setSplitConfig, deleteSplitConfig, getSplitInvestmentKey, type AssetSplitConfig, type CoinSplit } from '../utils/assetSplits'
+import { loadSplits, setSplitConfig, deleteSplitConfig, getSplitInvestmentKey, type AssetSplitConfig, type CoinSplit } from '../utils/assetSplits'
 import DataManagementModal from './DataManagementModal'
 import { CoreDashboardTab } from './core/CoreDashboardTab'
+import { fmtNumber as fmt, fmtEur, fmtPct } from '../shared/lib/format'
+import { ConfirmDialog } from '../shared/ui/ConfirmDialog'
+import { computePortfolioValuation } from '../domain/portfolio/valuation'
+import { computeRebalancePlan } from '../domain/rebalancing/rebalanceEngine'
 import {
   fetchMetalPricesEur,
   fetchSingleMetalPriceEur,
@@ -67,6 +71,7 @@ import {
   getAssetOunceInfo,
   formatOunces,
   computeMetalOunceOverview,
+  parseOunceDenomination,
   TROY_OZ_IN_GRAMS,
   XTRACKERS_SILVER_OZ_PER_SHARE,
   GRAM_GOLD_ETFS,
@@ -79,21 +84,6 @@ interface DashboardProps {
   onRulesChanged?: () => void
   onAddAsset?: (asset: Investment) => void
   onDeleteAsset?: (key: string) => void
-}
-
-function fmt(value: number, digits = 2): string {
-  return value.toLocaleString('de-DE', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
-}
-
-function fmtEur(value: number): string {
-  return `€ ${fmt(value)}`
-}
-
-function fmtPct(value: number): string {
-  return `${(value * 100).toFixed(1)} %`
 }
 
 function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number; payload: { color: string; targetPct: number } }> }) {
@@ -118,7 +108,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
 
 function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, onFetchPrice }: { subItems: Investment[], isSilver: boolean, manualPrice: number, onSavePrice: (val: number) => void, isLoading?: boolean, onFetchPrice?: () => void }) {
   const [localPrice, setLocalPrice] = useState(manualPrice ? manualPrice.toString() : '');
-  
+
   useEffect(() => {
     setLocalPrice(manualPrice ? manualPrice.toString() : '');
   }, [manualPrice]);
@@ -133,7 +123,7 @@ function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, 
       hasCoins = true;
     }
   });
-  
+
   if (!hasCoins) return null;
 
   return (
@@ -142,7 +132,7 @@ function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, 
         MÜNZEN:
       </div>
       <div style={{ display: 'flex', alignItems: 'center', marginRight: '12px', background: 'var(--bg-input)', borderRadius: '6px', border: '1px solid var(--border)', overflow: 'hidden' }}>
-        <input 
+        <input
           type="number"
           placeholder="1 oz Preis €"
           value={localPrice}
@@ -158,7 +148,7 @@ function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, 
             outline: 'none'
           }}
         />
-        <button 
+        <button
           type="button"
           onClick={() => onSavePrice(parseFloat(localPrice) || 0)}
           style={{ background: 'var(--gold)', color: '#0d0f14', border: 'none', padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -180,8 +170,8 @@ function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, 
         )}
       </div>
       {Object.entries(coinCounts).sort((a, b) => {
-        const valA = eval(a[0].replace(' oz', '')) || 0;
-        const valB = eval(b[0].replace(' oz', '')) || 0;
+        const valA = parseOunceDenomination(a[0]) ?? 0;
+        const valB = parseOunceDenomination(b[0]) ?? 0;
         return valB - valA;
       }).map(([size, count]) => (
         <div key={size} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: '12px', gap: '6px', fontSize: '0.8rem', border: '1px solid var(--border)' }}>
@@ -303,57 +293,32 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   // Split state
   const [splitVersion, setSplitVersion] = useState(0)
-  const displayInvestments = useMemo(() => {
-    const afterSplits = applySplits(investments);
-    return afterSplits.map(inv => {
-      const isinUpper = inv.isin?.toUpperCase() || '';
-      if (inv.category === 'Safe-Haven Gold' && manualGoldPrice > 0 && isinUpper === 'XC0009655157' && inv.quantity > 0) {
-        return {
-          ...inv,
-          currentPrice: manualGoldPrice,
-          currentValue: inv.quantity * manualGoldPrice,
-        };
-      }
-      if (inv.subcategory === 'Silber' && manualSilverPrice > 0 && isinUpper === 'XC0009653103' && inv.quantity > 0) {
-        return {
-          ...inv,
-          currentPrice: manualSilverPrice,
-          currentValue: inv.quantity * manualSilverPrice,
-        };
-      }
-
-      let mPrice = 0;
-      if (inv.category === 'Safe-Haven Gold') mPrice = manualGoldPrice;
-      else if (inv.subcategory === 'Silber') mPrice = manualSilverPrice;
-
-      if (mPrice > 0) {
-        const match = inv.name.match(/\b(1\/[248]|1\/10|1\/20|\d+(?:[.,]\d+)?)\s*(oz|unze|ounce)\b/i);
-        if (match) {
-          const sizeStr = match[1].replace(',', '.');
-          let ounces = 0;
-          if (sizeStr.includes('/')) {
-            const [n, d] = sizeStr.split('/');
-            ounces = parseFloat(n) / parseFloat(d);
-          } else {
-            ounces = parseFloat(sizeStr);
-          }
-          if (ounces > 0) {
-            return {
-              ...inv,
-              currentPrice: ounces * mPrice,
-              currentValue: ounces * (inv.quantity || 1) * mPrice,
-            };
-          }
-        }
-      }
-      return inv;
-    });
+  const valuation = useMemo(() => {
+    void splitVersion
+    return computePortfolioValuation(investments, manualGoldPrice, manualSilverPrice)
   }, [investments, splitVersion, manualGoldPrice, manualSilverPrice])
+  const {
+    displayInvestments,
+    activeInvestments,
+    totalValue,
+    totalCost,
+    totalGain,
+    totalGainPct,
+    goldOzPrice,
+    silverOzPrice: SILVER_OZ_PRICE_EUR,
+  } = valuation
 
   const [rules, setRules] = useState<UserRule[]>(() => loadRules())
   const [addAssetOpen, setAddAssetOpen] = useState(false)
   const [newAsset, setNewAsset] = useState({ name: '', isin: '', currentValue: '', category: 'Stocks' as AssetCategory, subcategory: 'General' })
   const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string
+    message: string
+    confirmLabel?: string
+    danger?: boolean
+    onConfirm: () => void
+  } | null>(null)
   const [dataModalOpen, setDataModalOpen] = useState(false)
   const [brokerVersion, setBrokerVersion] = useState(0)
   const [rebalanceMethod, setRebalanceMethod] = useState<'core-first' | 'standard'>(() => {
@@ -411,9 +376,9 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const [showNewDim, setShowNewDim] = useState(false)
   const [newDimName, setNewDimName] = useState('')
   const [editingDimName, setEditingDimName] = useState('')
-  
+
   const dimensionExportRef = useRef<HTMLDivElement>(null)
-  
+
   const handleExportDimensionJPG = useCallback(() => {
     const activeDimension = dimensions.find(d => d.id === activeDimensionId)
     if (dimensionExportRef.current && activeDimension) {
@@ -423,7 +388,8 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
         })
         .catch((err) => {
           console.error('Fehler beim Exportieren als JPG:', err)
-          alert('Export fehlgeschlagen.')
+          setImportMsg('JPG-Export fehlgeschlagen.')
+          setTimeout(() => setImportMsg(null), 4000)
         })
     }
   }, [activeDimensionId, dimensions])
@@ -486,10 +452,10 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const [depositories, setDepositoriesState] = useState(() => loadDepositories())
   const [depositoryList, setDepositoryList] = useState(() => loadDepositoryList())
   const [depoVersion, setDepoVersion] = useState(0)
-  
+
   const [showDepoEditor, setShowDepoEditor] = useState(false)
   const [newDepoName, setNewDepoName] = useState('')
-  
+
   const [splitModalAsset, setSplitModalAsset] = useState<Investment | null>(null)
   const [splitConfig, setSplitConfigState] = useState<AssetSplitConfig | null>(null)
   const [originalSplitConfig, setOriginalSplitConfig] = useState<AssetSplitConfig | null>(null)
@@ -498,7 +464,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     if (!inv) return
     let targetInv = inv
     if (inv._originalKey) {
-       targetInv = investments?.find(i => investmentKey(i) === inv._originalKey) || inv
+      targetInv = investments?.find(i => investmentKey(i) === inv._originalKey) || inv
     }
 
     const key = investmentKey(targetInv)
@@ -549,10 +515,18 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   const handleCloseSplitModal = () => {
     if (hasUnsavedSplitChanges()) {
-      const confirmClose = window.confirm(
-        'Möchtest du das Fenster wirklich schließen? Ungespeicherte Änderungen gehen verloren.'
-      )
-      if (!confirmClose) return
+      setConfirmDialog({
+        title: 'Ungespeicherte Änderungen',
+        message: 'Möchtest du das Fenster wirklich schließen? Ungespeicherte Änderungen gehen verloren.',
+        confirmLabel: 'Schließen',
+        danger: true,
+        onConfirm: () => {
+          setConfirmDialog(null)
+          setSplitModalAsset(null)
+          setOriginalSplitConfig(null)
+        },
+      })
+      return
     }
     setSplitModalAsset(null)
     setOriginalSplitConfig(null)
@@ -561,13 +535,13 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   const handleSaveSplit = () => {
     if (!splitConfig || !splitModalAsset) return
     setSplitConfig(splitConfig)
-    
+
     // Sync depositories
     const allDeps = loadDepositories()
     for (const s of splitConfig.splits) {
-       if (s.depository) {
-          allDeps[getSplitInvestmentKey(splitModalAsset, s.id)] = s.depository
-       }
+      if (s.depository) {
+        allDeps[getSplitInvestmentKey(splitModalAsset, s.id)] = s.depository
+      }
     }
     saveDepositories(allDeps)
     refreshDepositories()
@@ -872,13 +846,22 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     setDraftSubWeights({ ...draftSubWeights, [cat]: current.filter((sw) => sw.name !== subName) })
   }
 
-  const activeInvestments = displayInvestments.filter((inv) => inv.currentValue > 0)
-  const totalValue = activeInvestments.reduce((s, inv) => s + inv.currentValue, 0)
-  const totalCost = activeInvestments.reduce((s, inv) => s + inv.purchasePrice * inv.quantity, 0)
-  const totalGain = totalValue - totalCost
-  const totalGainPct = totalCost > 0 ? totalGain / totalCost : 0
-
   const allocation = computeAllocation(activeInvestments, activeWeights)
+
+  const rebalancePlan = useMemo(
+    () =>
+      computeRebalancePlan({
+        activeInvestments,
+        allocation,
+        activeSubWeights,
+        totalValue,
+        goldOzPrice,
+        silverOzPrice: SILVER_OZ_PRICE_EUR,
+        rebalanceMethod,
+        sortByDeviationDesc: true,
+      }),
+    [activeInvestments, allocation, activeSubWeights, totalValue, goldOzPrice, SILVER_OZ_PRICE_EUR, rebalanceMethod]
+  )
 
   const suggestedCoreBuy = useMemo(() => {
     const stocksAlloc = allocation.find((a) => a.category === 'Stocks')
@@ -887,46 +870,6 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     const diff = targetVal - stocksAlloc.value
     return diff > totalValue * 0.0025 ? Math.round(diff) : 0
   }, [allocation, totalValue])
-
-  // Extract gold price per gram from ETF and calculate 1 oz Philharmoniker price
-  // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
-  const DEALER_PREMIUM = 1.03
-
-  let goldGramPrice = 0
-  const exactGramEtf = displayInvestments.find(inv => GRAM_GOLD_ETFS.includes(inv.isin.toUpperCase()) && inv.currentPrice > 0)
-
-  if (exactGramEtf) {
-    goldGramPrice = exactGramEtf.currentPrice
-  } else {
-    // If no explicit 1-gram ETF is found, look for any gold asset priced between 60 and 95 EUR (typical 1g range)
-    const genericGoldEtf = displayInvestments.find(inv => inv.sector.toLowerCase() === 'gold' && inv.name.toLowerCase().includes('gold') && inv.currentPrice >= 60 && inv.currentPrice <= 95)
-    if (genericGoldEtf) {
-      goldGramPrice = genericGoldEtf.currentPrice
-    } else {
-      // Fallback to a sensible current market average (approx 75 EUR per gram) if no 1-gram equivalent is available in portfolio
-      goldGramPrice = 75
-    }
-  }
-
-  const goldOzPrice = manualGoldPrice > 0 ? manualGoldPrice : goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
-
-  let silverSharePrice = 30
-  const knownSilverEtcs = ['JE00B1VS3333', 'IE00B4NCWG09', 'IE00B43VDT70', 'XC0009653103']
-  const exactSilverEtc = displayInvestments.find(inv => knownSilverEtcs.includes(inv.isin?.toUpperCase() || '') && inv.currentPrice > 0)
-
-  if (exactSilverEtc) {
-     silverSharePrice = exactSilverEtc.currentPrice
-  } else {
-     const xtrackersSilver = displayInvestments.find(inv => inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80'))
-     if (xtrackersSilver && xtrackersSilver.currentPrice > 0) {
-        silverSharePrice = xtrackersSilver.currentPrice / XTRACKERS_SILVER_OZ_PER_SHARE
-     } else {
-        // Find generic silver ETC priced realistically between 15 and 50 EUR
-        const genericSilver = displayInvestments.find(inv => (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver')) && inv.currentPrice > 15 && inv.currentPrice < 50 && (!inv.isin || inv.isin.length >= 6))
-        if (genericSilver) silverSharePrice = genericSilver.currentPrice
-     }
-  }
-  const SILVER_OZ_PRICE_EUR = manualSilverPrice > 0 ? manualSilverPrice : silverSharePrice
 
   const metalOunceOverview = useMemo(
     () =>
@@ -1023,7 +966,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
   // Get subcategory options for a given category
   const getSubcategories = (cat: AssetCategory): string[] => {
     const defaults = DEFAULT_SUBCATEGORIES[cat] || ['General']
-    const fromInvestments = new Set(activeInvestments.filter((inv) => inv.category === cat).map((inv) => inv.subcategory))
+    const fromInvestments = new Set(activeInvestments.filter((inv) => inv.category === cat).map((inv) => inv.subcategory || 'General'))
     const fromProfile = (activeSubWeights[cat] || []).map((sw) => sw.name)
     return Array.from(new Set([...defaults, ...fromInvestments, ...fromProfile])).sort()
   }
@@ -1192,64 +1135,16 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
       </div>
 
       {activeTab === 'allocation' && (
-      <>
-      {/* Charts */}
-      <div className="dashboard-grid">
-        {/* Actual Allocation */}
-        <div className="card">
-          <div className="card-title">Current Allocation</div>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie
-                data={actualChartData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={90}
-                paddingAngle={2}
-                dataKey="value"
-              >
-                {actualChartData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} stroke="none" />
-                ))}
-              </Pie>
-              <Tooltip content={<CustomTooltip />} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="legend">
-            {allocation.map((a) => (
-              <div className="legend-item" key={a.category}>
-                <span className="legend-dot" style={{ background: a.color }} />
-                <span className="legend-name">{a.category}</span>
-                <span className="legend-pct">{fmtPct(a.percentage)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Target Allocation */}
-        <div className="card">
-          <div className="card-title" style={{ justifyContent: 'space-between' }}>
-            <span>Target Allocation</span>
-            <div className="profile-selector">
-              <select
-                className="cat-select"
-                value={activeProfileId}
-                onChange={(e) => switchProfile(e.target.value)}
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {!editingWeights ? (
-            <>
+        <>
+          {/* Charts */}
+          <div className="dashboard-grid">
+            {/* Actual Allocation */}
+            <div className="card">
+              <div className="card-title">Current Allocation</div>
               <ResponsiveContainer width="100%" height={220}>
                 <PieChart>
                   <Pie
-                    data={targetChartData}
+                    data={actualChartData}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -1257,7 +1152,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     paddingAngle={2}
                     dataKey="value"
                   >
-                    {targetChartData.map((entry, i) => (
+                    {actualChartData.map((entry, i) => (
                       <Cell key={i} fill={entry.color} stroke="none" />
                     ))}
                   </Pie>
@@ -1265,654 +1160,477 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                 </PieChart>
               </ResponsiveContainer>
               <div className="legend">
-                {ALL_CATEGORIES.map((cat) => (
-                  <div className="legend-item" key={cat}>
-                    <span className="legend-dot" style={{ background: CATEGORY_COLORS[cat] }} />
-                    <span className="legend-name">{cat}</span>
-                    <span className="legend-pct">{fmtPct(activeWeights[cat])}</span>
+                {allocation.map((a) => (
+                  <div className="legend-item" key={a.category}>
+                    <span className="legend-dot" style={{ background: a.color }} />
+                    <span className="legend-name">{a.category}</span>
+                    <span className="legend-pct">{fmtPct(a.percentage)}</span>
                   </div>
                 ))}
               </div>
-              <div className="profile-actions">
-                {activeProfile.id !== 'incrementum-60-40' && (
-                  <button className="btn btn-sm btn-ghost" onClick={() => { setDraftWeights({ ...activeWeights }); setDraftSubWeights(JSON.parse(JSON.stringify(activeSubWeights))); setEditingWeights(true) }}>
-                    Edit Weights
-                  </button>
-                )}
-                <button className="btn btn-sm btn-ghost" onClick={() => setShowNewProfile(!showNewProfile)}>
-                  <Plus size={12} /> New Profile
-                </button>
-                {activeProfile.id !== 'incrementum-60-40' && (
-                  <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleDeleteProfile}>
-                    <Trash2 size={12} /> Delete
-                  </button>
-                )}
-              </div>
-              {showNewProfile && (
-                <div className="new-profile-row">
-                  <input
-                    type="text"
-                    className="new-profile-input"
-                    placeholder="Profile name..."
-                    value={newProfileName}
-                    onChange={(e) => setNewProfileName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleCreateProfile()}
-                  />
-                  <button className="btn btn-sm btn-gold" onClick={handleCreateProfile} disabled={!newProfileName.trim()}>
-                    Create
-                  </button>
+            </div>
+
+            {/* Target Allocation */}
+            <div className="card">
+              <div className="card-title" style={{ justifyContent: 'space-between' }}>
+                <span>Target Allocation</span>
+                <div className="profile-selector">
+                  <select
+                    className="cat-select"
+                    value={activeProfileId}
+                    onChange={(e) => switchProfile(e.target.value)}
+                  >
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
-            </>
-          ) : (
-            <div className="weight-editor">
-              <div className="weight-editor-section-title">Main Category Weights</div>
-              {ALL_CATEGORIES.map((cat) => {
-                const pct = Math.round(draftWeights[cat] * 100)
-                return (
-                  <div className="weight-row" key={cat}>
-                    <span className="weight-dot" style={{ background: CATEGORY_COLORS[cat] }} />
-                    <span className="weight-name">{cat}</span>
-                    <button 
-                      className="slider-btn" 
-                      onClick={() => setDraftWeights({ ...draftWeights, [cat]: Math.max(0, draftWeights[cat] - 0.01) })}
-                    >−</button>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={pct}
-                      className="weight-slider"
-                      style={{ accentColor: CATEGORY_COLORS[cat] }}
-                      onChange={(e) => setDraftWeights({ ...draftWeights, [cat]: parseInt(e.target.value) / 100 })}
-                    />
-                    <button 
-                      className="slider-btn" 
-                      onClick={() => setDraftWeights({ ...draftWeights, [cat]: Math.min(1, draftWeights[cat] + 0.01) })}
-                    >+</button>
-                    <span className="weight-pct">{pct} %</span>
-                  </div>
-                )
-              })}
-              <div className="weight-total" style={{ color: Math.abs(Object.values(draftWeights).reduce((s, v) => s + v, 0) - 1) < 0.001 ? 'var(--green)' : 'var(--red)' }}>
-                Total: {Math.round(Object.values(draftWeights).reduce((s, v) => s + v, 0) * 100)} %
               </div>
 
-              {/* Subcategory weights */}
-              {ALL_CATEGORIES.map((cat) => {
-                const catSubWeights = draftSubWeights[cat] || []
-                // Show only subcategories explicitly targeted in this profile
-                const allSubNames = new Set([
-                  ...catSubWeights.map((sw) => sw.name),
-                ])
-                const subs = Array.from(allSubNames).sort()
-                const subWeightMap = new Map(catSubWeights.map((sw) => [sw.name, sw.weight]))
-                const subTotal = subs.reduce((s, sub) => s + (subWeightMap.get(sub) ?? 0), 0)
-                const hasSubs = subs.length > 1 || catSubWeights.length > 0
-
-                return (
-                  <div key={cat} className="sub-weight-section">
-                    <div className="weight-editor-section-title" style={{ color: CATEGORY_COLORS[cat] }}>
-                      {cat} Subcategories
-                    </div>
-                    {hasSubs && subs.map((sub) => {
-                      const val = Math.round((subWeightMap.get(sub) ?? 0) * 100)
-                      return (
-                        <div className="weight-row sub-weight-row" key={sub}>
-                          <span className="weight-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
-                          <span className="weight-name">{sub}</span>
-                          <button 
-                            className="slider-btn" 
-                            onClick={() => updateDraftSubWeight(cat, sub, Math.max(0, (subWeightMap.get(sub) ?? 0) - 0.01))}
-                          >−</button>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            value={val}
-                            className="weight-slider"
-                            style={{ accentColor: getSubcategoryColor(sub, cat) }}
-                            onChange={(e) => updateDraftSubWeight(cat, sub, parseInt(e.target.value) / 100)}
-                          />
-                          <button 
-                            className="slider-btn" 
-                            onClick={() => updateDraftSubWeight(cat, sub, Math.min(1, (subWeightMap.get(sub) ?? 0) + 0.01))}
-                          >+</button>
-                          <span className="weight-pct">{val} %</span>
-                          <button
-                            className="btn-icon-sm"
-                            title={`${sub} entfernen`}
-                            onClick={() => removeDraftSubcategory(cat, sub)}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      )
-                    })}
-                    {hasSubs && (
-                      <div className="weight-total sub-weight-total" style={{ color: Math.abs(subTotal - 1) < 0.001 ? 'var(--green)' : 'var(--red)' }}>
-                        Sub-Total: {Math.round(subTotal * 100)} %
+              {!editingWeights ? (
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={targetChartData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={2}
+                        dataKey="value"
+                      >
+                        {targetChartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} stroke="none" />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<CustomTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="legend">
+                    {ALL_CATEGORIES.map((cat) => (
+                      <div className="legend-item" key={cat}>
+                        <span className="legend-dot" style={{ background: CATEGORY_COLORS[cat] }} />
+                        <span className="legend-name">{cat}</span>
+                        <span className="legend-pct">{fmtPct(activeWeights[cat])}</span>
                       </div>
+                    ))}
+                  </div>
+                  <div className="profile-actions">
+                    {activeProfile.id !== 'incrementum-60-40' && (
+                      <button className="btn btn-sm btn-ghost" onClick={() => { setDraftWeights({ ...activeWeights }); setDraftSubWeights(JSON.parse(JSON.stringify(activeSubWeights))); setEditingWeights(true) }}>
+                        Edit Weights
+                      </button>
                     )}
-                    <div className="new-sub-row">
+                    <button className="btn btn-sm btn-ghost" onClick={() => setShowNewProfile(!showNewProfile)}>
+                      <Plus size={12} /> New Profile
+                    </button>
+                    {activeProfile.id !== 'incrementum-60-40' && (
+                      <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleDeleteProfile}>
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    )}
+                  </div>
+                  {showNewProfile && (
+                    <div className="new-profile-row">
                       <input
                         type="text"
                         className="new-profile-input"
-                        placeholder="New subcategory..."
-                        value={newSubName[cat] || ''}
-                        onChange={(e) => setNewSubName({ ...newSubName, [cat]: e.target.value })}
-                        onKeyDown={(e) => e.key === 'Enter' && addDraftSubcategory(cat)}
+                        placeholder="Profile name..."
+                        value={newProfileName}
+                        onChange={(e) => setNewProfileName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreateProfile()}
                       />
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => addDraftSubcategory(cat)}
-                        disabled={!(newSubName[cat] || '').trim()}
-                      >
-                        <Plus size={11} /> Add
+                      <button className="btn btn-sm btn-gold" onClick={handleCreateProfile} disabled={!newProfileName.trim()}>
+                        Create
                       </button>
                     </div>
-                  </div>
-                )
-              })}
-
-              <div className="profile-actions">
-                <button className="btn btn-sm btn-gold" onClick={handleSaveWeights}>
-                  Save
-                </button>
-                <button className="btn btn-sm btn-ghost" onClick={() => setEditingWeights(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Allocation Bars */}
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-          <span>Allocation vs Target</span>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={handleExpandAllAlloc}
-              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
-              title="Alle Allocation-Details aufklappen"
-            >
-              Alles aufklappen
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={handleCollapseAllAlloc}
-              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
-              title="Alle Allocation-Details einklappen"
-            >
-              Alles einklappen
-            </button>
-          </div>
-        </div>
-        {allocation.map((a) => {
-          const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
-          const hasMultipleSubs = subAlloc.length > 1
-          const subBarKey = `alloc::${a.category}`
-          const subsVisible = !collapsed[subBarKey]
-          return (
-            <div key={a.category}>
-              <div
-                className="alloc-bar-wrap"
-                style={{ cursor: hasMultipleSubs ? 'pointer' : 'default' }}
-                onClick={() => hasMultipleSubs && toggleCollapse(subBarKey)}
-              >
-                <div className="alloc-bar-label">
-                  <span style={{ color: a.color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {hasMultipleSubs && (subsVisible
-                      ? <ChevronDown size={12} />
-                      : <ChevronRight size={12} />
-                    )}
-                    {a.category}
-                  </span>
-                  <span>
-                    <span style={{ color: a.deviation > 0.005 ? 'var(--green)' : a.deviation < -0.005 ? 'var(--red)' : 'var(--text-primary)' }}>
-                      {fmtPct(a.percentage)}
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)' }}> / {fmtPct(a.targetPercentage)}</span>
-                  </span>
-                </div>
-                <div className="alloc-bar-track">
-                  <div
-                    className="alloc-bar-fill"
-                    style={{
-                      width: `${Math.min(a.percentage / (a.targetPercentage || 0.01), 1) * 100}%`,
-                      background: a.color,
-                      opacity: 0.8,
-                    }}
-                  />
-                </div>
-              </div>
-              {/* Subcategory bars */}
-              {hasMultipleSubs && subsVisible && (
-                <div className="sub-alloc-bars">
-                  {subAlloc.map((sa) => (
-                    <div className="sub-alloc-row" key={sa.subcategory}>
-                      <span className="sub-alloc-dot" style={{ background: sa.color }} />
-                      <span className="sub-alloc-name">{sa.subcategory}</span>
-                      <div className="sub-alloc-track">
-                        <div
-                          className="sub-alloc-fill"
-                          style={{
-                            width: `${Math.min(sa.percentage / (sa.targetPercentage || 0.01), 1) * 100}%`,
-                            background: sa.color,
-                          }}
+                  )}
+                </>
+              ) : (
+                <div className="weight-editor">
+                  <div className="weight-editor-section-title">Main Category Weights</div>
+                  {ALL_CATEGORIES.map((cat) => {
+                    const pct = Math.round(draftWeights[cat] * 100)
+                    return (
+                      <div className="weight-row" key={cat}>
+                        <span className="weight-dot" style={{ background: CATEGORY_COLORS[cat] }} />
+                        <span className="weight-name">{cat}</span>
+                        <button
+                          className="slider-btn"
+                          onClick={() => setDraftWeights({ ...draftWeights, [cat]: Math.max(0, draftWeights[cat] - 0.01) })}
+                        >−</button>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={pct}
+                          className="weight-slider"
+                          style={{ accentColor: CATEGORY_COLORS[cat] }}
+                          onChange={(e) => setDraftWeights({ ...draftWeights, [cat]: parseInt(e.target.value) / 100 })}
                         />
+                        <button
+                          className="slider-btn"
+                          onClick={() => setDraftWeights({ ...draftWeights, [cat]: Math.min(1, draftWeights[cat] + 0.01) })}
+                        >+</button>
+                        <span className="weight-pct">{pct} %</span>
                       </div>
-                      <span className="sub-alloc-pct">{(sa.percentage * 100).toFixed(0)}%</span>
-                      <span className="sub-alloc-target">/ {(sa.targetPercentage * 100).toFixed(0)}%</span>
-                    </div>
-                  ))}
+                    )
+                  })}
+                  <div className="weight-total" style={{ color: Math.abs(Object.values(draftWeights).reduce((s, v) => s + v, 0) - 1) < 0.001 ? 'var(--green)' : 'var(--red)' }}>
+                    Total: {Math.round(Object.values(draftWeights).reduce((s, v) => s + v, 0) * 100)} %
+                  </div>
+
+                  {/* Subcategory weights */}
+                  {ALL_CATEGORIES.map((cat) => {
+                    const catSubWeights = draftSubWeights[cat] || []
+                    // Show only subcategories explicitly targeted in this profile
+                    const allSubNames = new Set([
+                      ...catSubWeights.map((sw) => sw.name),
+                    ])
+                    const subs = Array.from(allSubNames).sort()
+                    const subWeightMap = new Map(catSubWeights.map((sw) => [sw.name, sw.weight]))
+                    const subTotal = subs.reduce((s, sub) => s + (subWeightMap.get(sub) ?? 0), 0)
+                    const hasSubs = subs.length > 1 || catSubWeights.length > 0
+
+                    return (
+                      <div key={cat} className="sub-weight-section">
+                        <div className="weight-editor-section-title" style={{ color: CATEGORY_COLORS[cat] }}>
+                          {cat} Subcategories
+                        </div>
+                        {hasSubs && subs.map((sub) => {
+                          const val = Math.round((subWeightMap.get(sub) ?? 0) * 100)
+                          return (
+                            <div className="weight-row sub-weight-row" key={sub}>
+                              <span className="weight-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
+                              <span className="weight-name">{sub}</span>
+                              <button
+                                className="slider-btn"
+                                onClick={() => updateDraftSubWeight(cat, sub, Math.max(0, (subWeightMap.get(sub) ?? 0) - 0.01))}
+                              >−</button>
+                              <input
+                                type="range"
+                                min={0}
+                                max={100}
+                                value={val}
+                                className="weight-slider"
+                                style={{ accentColor: getSubcategoryColor(sub, cat) }}
+                                onChange={(e) => updateDraftSubWeight(cat, sub, parseInt(e.target.value) / 100)}
+                              />
+                              <button
+                                className="slider-btn"
+                                onClick={() => updateDraftSubWeight(cat, sub, Math.min(1, (subWeightMap.get(sub) ?? 0) + 0.01))}
+                              >+</button>
+                              <span className="weight-pct">{val} %</span>
+                              <button
+                                className="btn-icon-sm"
+                                title={`${sub} entfernen`}
+                                onClick={() => removeDraftSubcategory(cat, sub)}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          )
+                        })}
+                        {hasSubs && (
+                          <div className="weight-total sub-weight-total" style={{ color: Math.abs(subTotal - 1) < 0.001 ? 'var(--green)' : 'var(--red)' }}>
+                            Sub-Total: {Math.round(subTotal * 100)} %
+                          </div>
+                        )}
+                        <div className="new-sub-row">
+                          <input
+                            type="text"
+                            className="new-profile-input"
+                            placeholder="New subcategory..."
+                            value={newSubName[cat] || ''}
+                            onChange={(e) => setNewSubName({ ...newSubName, [cat]: e.target.value })}
+                            onKeyDown={(e) => e.key === 'Enter' && addDraftSubcategory(cat)}
+                          />
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => addDraftSubcategory(cat)}
+                            disabled={!(newSubName[cat] || '').trim()}
+                          >
+                            <Plus size={11} /> Add
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  <div className="profile-actions">
+                    <button className="btn btn-sm btn-gold" onClick={handleSaveWeights}>
+                      Save
+                    </button>
+                    <button className="btn btn-sm btn-ghost" onClick={() => setEditingWeights(false)}>
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
-          )
-        })}
-      </div>
-
-      {/* Rebalancing Recommendations */}
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <span>Rebalancing Recommendations</span>
-            {/* Method Slider Switch */}
-            <div 
-              className="rebalance-method-slider-box" 
-              title="Rebalancing-Methode über Schieberegler umschalten:&#10;• Core-First (2-Stufen): Priorisiert Core-Zukäufe bei untergewichtetem Stocks; hält Satelliten bis Stocks im Zielbereich liegt.&#10;• Standard (Parallel): Rebalanced alle Subkategorien unabhängig und parallel."
-            >
-              <SlidersHorizontal size={13} color="var(--text-muted)" style={{ marginLeft: 2 }} />
-              <button
-                type="button"
-                className={`rebalance-slider-btn core-first ${rebalanceMethod === 'core-first' ? 'active' : ''}`}
-                onClick={() => handleToggleRebalanceMethod('core-first')}
-                title="Modus aktivieren: Core-First (2-Stufen)"
-              >
-                Core-First (2-Stufen)
-              </button>
-
-              <div
-                role="slider"
-                aria-label="Rebalancing Methode Schieberegler"
-                aria-valuenow={rebalanceMethod === 'core-first' ? 0 : 1}
-                aria-valuetext={rebalanceMethod === 'core-first' ? 'Core-First (2-Stufen)' : 'Standard (Parallel)'}
-                tabIndex={0}
-                className={`rebalance-slider-track ${rebalanceMethod}`}
-                onClick={() => handleToggleRebalanceMethod(rebalanceMethod === 'core-first' ? 'standard' : 'core-first')}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') handleToggleRebalanceMethod('core-first');
-                  if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter') handleToggleRebalanceMethod('standard');
-                }}
-                title="Schieberegler anklicken oder Pfeiltasten zum Umschalten"
-              >
-                <div className="rebalance-slider-thumb" />
-              </div>
-
-              <button
-                type="button"
-                className={`rebalance-slider-btn standard ${rebalanceMethod === 'standard' ? 'active' : ''}`}
-                onClick={() => handleToggleRebalanceMethod('standard')}
-                title="Modus aktivieren: Standard (Parallel)"
-              >
-                Standard (Parallel)
-              </button>
-            </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={handleExpandAllRebal}
-              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
-              title="Alle Rebalancing-Details aufklappen"
-            >
-              Alles aufklappen
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={handleCollapseAllRebal}
-              style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
-              title="Alle Rebalancing-Details einklappen"
-            >
-              Alles einklappen
-            </button>
-          </div>
-        </div>
-        <div className="rebalance-list">
-          {[...allocation].sort((a, b) => b.deviation - a.deviation).map((a) => {
-            const targetValue = totalValue * a.targetPercentage
-            const diff = targetValue - a.value
-            const absDiff = Math.abs(diff)
-            const catTolerance = totalValue * 0.0025
-            const isOk = absDiff < catTolerance
-            const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
-            const hasMultipleSubs = subAlloc.length > 1
-            const rebalSubKey = `rebal::${a.category}`
-            const rebalSubVisible = !collapsed[rebalSubKey]
 
-            // Check if Core reference is active for Stocks
-            const isStocks = a.category === 'Stocks'
-            const coreSub = isStocks ? subAlloc.find((sa) => sa.subcategory.toLowerCase() === 'core') : undefined
-            const hasCoreReference = isStocks && rebalanceMethod === 'core-first' && !!coreSub && coreSub.targetPercentage > 0
-            const stocksIsOk = isOk
-            const stocksIsUnder = diff > catTolerance
-            const stocksIsOver = diff < -catTolerance
-
-            // In Core-First Stage 2 (Stocks is on target), precompute satellite diffs so Core can absorb them
-            let coreStage2NetDiff = 0
-            if (hasCoreReference && coreSub && coreSub.value > 0 && stocksIsOk) {
-              subAlloc.forEach((sa) => {
-                if (sa.subcategory.toLowerCase() !== 'core') {
-                  const targetRatio = sa.targetPercentage / coreSub.targetPercentage
-                  const subTargetVal = coreSub.value * targetRatio
-                  const sDiff = subTargetVal - sa.value
-                  const sAbsDiff = Math.abs(sDiff)
-                  const sOk = sAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
-                  if (!sOk) {
-                    coreStage2NetDiff -= sDiff
-                  }
-                }
-              })
-            }
-
-            let actionText = ''
-            if (isOk) {
-              actionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
-            } else if (diff > 0) {
-              actionText = hasCoreReference
-                ? `Empfehlung: KAUFEN +${fmtEur(absDiff)} (in Core)`
-                : `Empfehlung: KAUFEN +${fmtEur(absDiff)}`
-            } else {
-              actionText = hasCoreReference
-                ? `Empfehlung: VERKAUFEN -${fmtEur(absDiff)} (aus Core)`
-                : `Empfehlung: VERKAUFEN -${fmtEur(absDiff)}`
-            }
-
-            const catTooltipLines = [
-              `${a.category} - Rebalancing Empfehlung`,
-              actionText,
-              `• Ist-Wert: ${fmtEur(a.value)} (${(a.percentage * 100).toFixed(1)}% des Portfolios)`,
-              `• Soll-Wert: ${fmtEur(targetValue)} (${(a.targetPercentage * 100).toFixed(1)}% des Portfolios)`,
-              `• Abweichung: ${a.deviation >= 0 ? '+' : ''}${(a.deviation * 100).toFixed(1)}% (${diff >= 0 ? '+' : ''}${fmtEur(diff)})`,
-            ]
-
-            if (hasCoreReference && coreSub) {
-              catTooltipLines.push(
-                `• Referenz-Modell: Core-First (2-Stufen)`,
-                `• Core: ${fmtEur(coreSub.value)} Ist-Wert, ${(coreSub.targetPercentage * 100).toFixed(0)}% Ziel-Gewichtung in Stocks`
-              )
-            }
-
-            if (a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0) {
-              const ozExact = (absDiff / goldOzPrice).toFixed(2)
-              const coinsCount = Math.floor(absDiff / goldOzPrice)
-              if (coinsCount >= 1) {
-                catTooltipLines.push(`• Gold-Stückelung: ≥ ${coinsCount} oz Philharmoniker (${ozExact} oz à ${fmtEur(goldOzPrice)})`)
-              } else {
-                catTooltipLines.push(`• Gold-Stückelung: ~${ozExact} oz Gold (1 oz = ${fmtEur(goldOzPrice)})`)
-              }
-            }
-
-            const catTooltipStr = catTooltipLines.join('\n')
-
-            return (
-              <div key={a.category}>
-                <div
-                  className="rebalance-item"
-                  title={catTooltipStr}
-                  style={{ cursor: hasMultipleSubs ? 'pointer' : 'default' }}
-                  onClick={() => hasMultipleSubs && toggleCollapse(rebalSubKey)}
+          {/* Allocation Bars */}
+          <div className="card" style={{ marginBottom: 24 }}>
+            <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+              <span>Allocation vs Target</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={handleExpandAllAlloc}
+                  style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  title="Alle Allocation-Details aufklappen"
                 >
-                  <span className="rebalance-item-dot" style={{ background: a.color }} />
-                  {hasMultipleSubs && (rebalSubVisible
-                    ? <ChevronDown size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
-                    : <ChevronRight size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
-                  )}
-                  <span className="rebalance-item-name">{a.category}</span>
-                  <span className="rebalance-deviation">
-                    {a.deviation >= 0 ? '+' : ''}{(a.deviation * 100).toFixed(1)} %
-                  </span>
-                  {isOk ? (
-                    <span className="rebalance-badge ok">
-                      <Minus size={10} style={{ marginRight: 4 }} />On Target
-                    </span>
-                  ) : diff > 0 ? (
-                    <span className="rebalance-badge buy">
-                      <TrendingUp size={10} style={{ marginRight: 4 }} />Buy {hasCoreReference ? 'Core ' : ''}{fmtEur(absDiff)}
-                    </span>
-                  ) : (
-                    <span className="rebalance-badge sell">
-                      <TrendingDown size={10} style={{ marginRight: 4 }} />Sell {hasCoreReference ? 'Core ' : ''}{fmtEur(absDiff)}
-                    </span>
-                  )}
-                  {/* Philharmoniker coin indicator for Safe-Haven Gold */}
-                  {a.category === 'Safe-Haven Gold' && diff > 0 && goldOzPrice > 0 && absDiff >= goldOzPrice && (
-                    <span title={`Kaufempfehlung ≥ ${Math.floor(absDiff / goldOzPrice)} oz Philharmoniker (${fmtEur(goldOzPrice)}/oz)`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
-                      <Coins size={16} color="var(--gold)" />
-                    </span>
-                  )}
-                  <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {(a.percentage * 100).toFixed(1)}% / {(a.targetPercentage * 100).toFixed(1)}% Portfolio
-                  </span>
-                </div>
-
-                {/* Subcategory rebalancing */}
-                {hasMultipleSubs && rebalSubVisible && (
-                  <div className="sub-rebalance-list">
-                    {[...subAlloc]
-                      .filter((sa) => sa.targetPercentage > 0)
-                      .sort((x, y) => {
-                        if (hasCoreReference) {
-                          const xIsCore = x.subcategory.toLowerCase() === 'core'
-                          const yIsCore = y.subcategory.toLowerCase() === 'core'
-                          if (xIsCore) return -1
-                          if (yIsCore) return 1
-                        }
-                        const xDev = (a.percentage * x.percentage) - (a.targetPercentage * x.targetPercentage)
-                        const yDev = (a.percentage * y.percentage) - (a.targetPercentage * y.targetPercentage)
-                        return yDev - xDev
-                      })
-                      .map((sa) => {
-                      const isThisCore = hasCoreReference && sa.subcategory.toLowerCase() === 'core'
-                      const subAbsTarget = a.targetPercentage * sa.targetPercentage
-                      const subActualAbs = a.percentage * sa.percentage
-
-                      let subTargetValue = totalValue * subAbsTarget
-                      let subDiff = subTargetValue - sa.value
-                      let subAbsDiff = Math.abs(subDiff)
-                      let subIsOk = subAbsDiff < totalValue * 0.005
-                      let subDev = subActualAbs - subAbsTarget
-                      let targetRatioToCore = 0
-                      let actualRatioToCore = 0
-                      let ratioDev = 0
-
-                      if (hasCoreReference) {
-                        if (isThisCore) {
-                          if (stocksIsUnder) {
-                            // Stage 1: Stocks is underweight -> Core absorbs entire category deficit
-                            subDiff = absDiff
-                            subAbsDiff = absDiff
-                            subTargetValue = sa.value + absDiff
-                            subIsOk = false
-                            subDev = subActualAbs - subAbsTarget
-                          } else if (stocksIsOver) {
-                            // Stage 1: Stocks is overweight -> Core absorbs entire category surplus
-                            subDiff = -absDiff
-                            subAbsDiff = absDiff
-                            subTargetValue = Math.max(0, sa.value - absDiff)
-                            subIsOk = false
-                            subDev = subActualAbs - subAbsTarget
-                          } else {
-                            // Stage 2: Stocks is in target range -> Core absorbs net satellite adjustments
-                            subDiff = coreStage2NetDiff
-                            subAbsDiff = Math.abs(subDiff)
-                            subTargetValue = sa.value + subDiff
-                            subIsOk = subAbsDiff < Math.max(coreSub ? coreSub.value * 0.02 : 0, totalValue * 0.005)
-                            subDev = subActualAbs - subAbsTarget
-                          }
-                        } else {
-                          // Satellites in Core-First mode
-                          if (stocksIsUnder || stocksIsOver) {
-                            // Stage 1: Stocks is not balanced compared to Gold/Bonds yet. Satellites are HELD.
-                            subIsOk = true
-                            subDiff = 0
-                            subAbsDiff = 0
-                            subDev = subActualAbs - subAbsTarget
-                          } else if (coreSub && coreSub.value > 0) {
-                            // Stage 2: Stocks is in target range! Now rebalance satellites relative to Core.
-                            targetRatioToCore = sa.targetPercentage / coreSub.targetPercentage
-                            actualRatioToCore = sa.value / coreSub.value
-                            subTargetValue = coreSub.value * targetRatioToCore
-                            subDiff = subTargetValue - sa.value
-                            subAbsDiff = Math.abs(subDiff)
-                            ratioDev = actualRatioToCore - targetRatioToCore
-                            subDev = ratioDev
-                            subIsOk = subAbsDiff < Math.max(coreSub.value * 0.02, totalValue * 0.005)
-                          }
-                        }
-                      }
-
-                      let subActionText = ''
-                      if (subIsOk) {
-                        if (hasCoreReference && !isThisCore && !stocksIsOk) {
-                          subActionText = `Empfehlung: Halten (Nachgelagert – Zuerst muss Stocks über Core das Zielgewicht von ${(a.targetPercentage * 100).toFixed(0)}% erreichen)`
-                        } else {
-                          subActionText = `Empfehlung: Im Zielbereich (keine Anpassung erforderlich)`
-                        }
-                      } else if (subDiff > 0) {
-                        if (hasCoreReference && isThisCore) {
-                          subActionText = stocksIsUnder
-                            ? `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (Basisaufbau für Stocks auf ${(a.targetPercentage * 100).toFixed(0)}%)`
-                            : `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (finanziert aus Satelliten-Gewinnmitnahme)`
-                        } else if (hasCoreReference && !isThisCore) {
-                          subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)} (finanziert aus Core)`
-                        } else {
-                          subActionText = `Empfehlung: KAUFEN +${fmtEur(subAbsDiff)}`
-                        }
-                      } else {
-                        if (hasCoreReference && isThisCore) {
-                          subActionText = stocksIsOver
-                            ? `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (Gewinnmitnahme aus Core)`
-                            : `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (zur Finanzierung untergewichteter Satelliten)`
-                        } else if (hasCoreReference && !isThisCore) {
-                          subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)} (in Core umschichten)`
-                        } else {
-                          subActionText = `Empfehlung: VERKAUFEN -${fmtEur(subAbsDiff)}`
-                        }
-                      }
-
-                      const subTooltipLines = [
-                        `${sa.subcategory} (${a.category}) - Rebalancing Empfehlung${isThisCore ? ' [Referenz-Anker]' : hasCoreReference ? ' [Core-First]' : ''}`,
-                        subActionText,
-                      ]
-
-                      if (hasCoreReference && !isThisCore) {
-                        if (!stocksIsOk) {
-                          subTooltipLines.push(
-                            `• Status: Halten (Nachgelagert – Core-Zukauf hat Priorität)`,
-                            `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von Stocks)`,
-                            `• Langfristiger Soll-Wert bei ${(a.targetPercentage * 100).toFixed(0)}% Stocks: ${fmtEur(totalValue * a.targetPercentage * sa.targetPercentage)}`,
-                            `• Hinweis: Satelliten-Anpassung greift erst, wenn Stocks im Zielbereich liegt.`
-                          )
-                        } else if (coreSub && coreSub.value > 0) {
-                          subTooltipLines.push(
-                            `• Ist-Wert: ${fmtEur(sa.value)} (${(actualRatioToCore * 100).toFixed(1)}% von Core)`,
-                            `• Soll-Wert: ${fmtEur(subTargetValue)} (${(targetRatioToCore * 100).toFixed(1)}% von Core: ${fmtEur(coreSub.value)})`,
-                            `• Abweichung zu Core: ${ratioDev >= 0 ? '+' : ''}${(ratioDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`,
-                            `• Portfolio-Anteil: ${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
-                          )
-                        }
-                      } else {
-                        subTooltipLines.push(
-                          `• Ist-Wert: ${fmtEur(sa.value)} (${(subActualAbs * 100).toFixed(1)}% Portfolio / ${(sa.percentage * 100).toFixed(0)}% von ${a.category})`,
-                          `• Soll-Wert: ${fmtEur(subTargetValue)} (${(subAbsTarget * 100).toFixed(1)}% Portfolio / ${(sa.targetPercentage * 100).toFixed(0)}% von ${a.category})`,
-                          `• Abweichung: ${subDev >= 0 ? '+' : ''}${(subDev * 100).toFixed(1)}% (${subDiff >= 0 ? '+' : ''}${fmtEur(subDiff)})`
-                        )
-                      }
-
-                      if (sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0) {
-                        const ozExact = (subAbsDiff / SILVER_OZ_PRICE_EUR).toFixed(1)
-                        const coinsCount = Math.floor(subAbsDiff / SILVER_OZ_PRICE_EUR)
-                        if (coinsCount >= 1) {
-                          subTooltipLines.push(`• Silber-Stückelung: ≥ ${coinsCount} oz Silber (${ozExact} oz à ${fmtEur(SILVER_OZ_PRICE_EUR)})`)
-                        } else {
-                          subTooltipLines.push(`• Silber-Stückelung: ~${ozExact} oz Silber (1 oz = ${fmtEur(SILVER_OZ_PRICE_EUR)})`)
-                        }
-                      }
-
-                      const subTooltipStr = subTooltipLines.join('\n')
-
-                      return (
-                        <div className="rebalance-item sub-rebalance-item" key={sa.subcategory} title={subTooltipStr}>
+                  Alles aufklappen
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={handleCollapseAllAlloc}
+                  style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  title="Alle Allocation-Details einklappen"
+                >
+                  Alles einklappen
+                </button>
+              </div>
+            </div>
+            {allocation.map((a) => {
+              const subAlloc = computeSubAllocation(activeInvestments, a.category, activeSubWeights[a.category])
+              const hasMultipleSubs = subAlloc.length > 1
+              const subBarKey = `alloc::${a.category}`
+              const subsVisible = !collapsed[subBarKey]
+              return (
+                <div key={a.category}>
+                  <div
+                    className="alloc-bar-wrap"
+                    style={{ cursor: hasMultipleSubs ? 'pointer' : 'default' }}
+                    onClick={() => hasMultipleSubs && toggleCollapse(subBarKey)}
+                  >
+                    <div className="alloc-bar-label">
+                      <span style={{ color: a.color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {hasMultipleSubs && (subsVisible
+                          ? <ChevronDown size={12} />
+                          : <ChevronRight size={12} />
+                        )}
+                        {a.category}
+                      </span>
+                      <span>
+                        <span style={{ color: a.deviation > 0.005 ? 'var(--green)' : a.deviation < -0.005 ? 'var(--red)' : 'var(--text-primary)' }}>
+                          {fmtPct(a.percentage)}
+                        </span>
+                        <span style={{ color: 'var(--text-secondary)' }}> / {fmtPct(a.targetPercentage)}</span>
+                      </span>
+                    </div>
+                    <div className="alloc-bar-track">
+                      <div
+                        className="alloc-bar-fill"
+                        style={{
+                          width: `${Math.min(a.percentage / (a.targetPercentage || 0.01), 1) * 100}%`,
+                          background: a.color,
+                          opacity: 0.8,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {/* Subcategory bars */}
+                  {hasMultipleSubs && subsVisible && (
+                    <div className="sub-alloc-bars">
+                      {subAlloc.map((sa) => (
+                        <div className="sub-alloc-row" key={sa.subcategory}>
                           <span className="sub-alloc-dot" style={{ background: sa.color }} />
-                          <span className="rebalance-item-name sub-rebalance-name">
-                            {sa.subcategory}
-                            {isThisCore && (
-                              <span style={{
-                                marginLeft: 6,
-                                fontSize: '0.66rem',
-                                padding: '1px 5px',
-                                borderRadius: 4,
-                                background: 'rgba(240, 192, 64, 0.15)',
-                                color: 'var(--gold)',
-                                border: '1px solid rgba(240, 192, 64, 0.3)',
-                                fontWeight: 700,
-                                letterSpacing: '0.02em',
-                                verticalAlign: 'middle'
-                              }}>
-                                Anker
+                          <span className="sub-alloc-name">{sa.subcategory}</span>
+                          <div className="sub-alloc-track">
+                            <div
+                              className="sub-alloc-fill"
+                              style={{
+                                width: `${Math.min(sa.percentage / (sa.targetPercentage || 0.01), 1) * 100}%`,
+                                background: sa.color,
+                              }}
+                            />
+                          </div>
+                          <span className="sub-alloc-pct">{(sa.percentage * 100).toFixed(0)}%</span>
+                          <span className="sub-alloc-target">/ {(sa.targetPercentage * 100).toFixed(0)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Rebalancing Recommendations */}
+          <div className="card" style={{ marginBottom: 24 }}>
+            <div className="card-title" style={{ marginBottom: 16, justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span>Rebalancing Recommendations</span>
+                {/* Method Slider Switch */}
+                <div
+                  className="rebalance-method-slider-box"
+                  title="Rebalancing-Methode über Schieberegler umschalten:&#10;• Core-First (2-Stufen): Priorisiert Core-Zukäufe bei untergewichtetem Stocks; hält Satelliten bis Stocks im Zielbereich liegt.&#10;• Standard (Parallel): Rebalanced alle Subkategorien unabhängig und parallel."
+                >
+                  <SlidersHorizontal size={13} color="var(--text-muted)" style={{ marginLeft: 2 }} />
+                  <button
+                    type="button"
+                    className={`rebalance-slider-btn core-first ${rebalanceMethod === 'core-first' ? 'active' : ''}`}
+                    onClick={() => handleToggleRebalanceMethod('core-first')}
+                    title="Modus aktivieren: Core-First (2-Stufen)"
+                  >
+                    Core-First (2-Stufen)
+                  </button>
+
+                  <div
+                    role="slider"
+                    aria-label="Rebalancing Methode Schieberegler"
+                    aria-valuenow={rebalanceMethod === 'core-first' ? 0 : 1}
+                    aria-valuetext={rebalanceMethod === 'core-first' ? 'Core-First (2-Stufen)' : 'Standard (Parallel)'}
+                    tabIndex={0}
+                    className={`rebalance-slider-track ${rebalanceMethod}`}
+                    onClick={() => handleToggleRebalanceMethod(rebalanceMethod === 'core-first' ? 'standard' : 'core-first')}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') handleToggleRebalanceMethod('core-first');
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter') handleToggleRebalanceMethod('standard');
+                    }}
+                    title="Schieberegler anklicken oder Pfeiltasten zum Umschalten"
+                  >
+                    <div className="rebalance-slider-thumb" />
+                  </div>
+
+                  <button
+                    type="button"
+                    className={`rebalance-slider-btn standard ${rebalanceMethod === 'standard' ? 'active' : ''}`}
+                    onClick={() => handleToggleRebalanceMethod('standard')}
+                    title="Modus aktivieren: Standard (Parallel)"
+                  >
+                    Standard (Parallel)
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={handleExpandAllRebal}
+                  style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  title="Alle Rebalancing-Details aufklappen"
+                >
+                  Alles aufklappen
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={handleCollapseAllRebal}
+                  style={{ padding: '4px 8px', fontSize: '0.75rem', fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  title="Alle Rebalancing-Details einklappen"
+                >
+                  Alles einklappen
+                </button>
+              </div>
+            </div>
+            <div className="rebalance-list">
+              {rebalancePlan.map((catPlan) => {
+                const hasMultipleSubs = catPlan.subcategories.length > 0
+                const rebalSubKey = `rebal::${catPlan.category}`
+                const rebalSubVisible = !collapsed[rebalSubKey]
+
+                return (
+                  <div key={catPlan.category}>
+                    <div
+                      className="rebalance-item"
+                      title={catPlan.tooltip}
+                      style={{ cursor: hasMultipleSubs ? 'pointer' : 'default' }}
+                      onClick={() => hasMultipleSubs && toggleCollapse(rebalSubKey)}
+                    >
+                      <span className="rebalance-item-dot" style={{ background: catPlan.color }} />
+                      {hasMultipleSubs && (rebalSubVisible
+                        ? <ChevronDown size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
+                        : <ChevronRight size={12} color="var(--text-muted)" style={{ marginLeft: -6, marginRight: -4 }} />
+                      )}
+                      <span className="rebalance-item-name">{catPlan.category}</span>
+                      <span className="rebalance-deviation">
+                        {catPlan.deviation >= 0 ? '+' : ''}{(catPlan.deviation * 100).toFixed(1)} %
+                      </span>
+                      {catPlan.action === 'ok' ? (
+                        <span className="rebalance-badge ok">
+                          <Minus size={10} style={{ marginRight: 4 }} />{catPlan.badgeText}
+                        </span>
+                      ) : catPlan.action === 'buy' ? (
+                        <span className="rebalance-badge buy">
+                          <TrendingUp size={10} style={{ marginRight: 4 }} />{catPlan.badgeText}
+                        </span>
+                      ) : (
+                        <span className="rebalance-badge sell">
+                          <TrendingDown size={10} style={{ marginRight: 4 }} />{catPlan.badgeText}
+                        </span>
+                      )}
+                      {catPlan.goldCoinCount > 0 && catPlan.goldCoinTooltip && (
+                        <span title={catPlan.goldCoinTooltip} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                          <Coins size={16} color="var(--gold)" />
+                        </span>
+                      )}
+                      <span className="rebalance-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                        {(catPlan.percentage * 100).toFixed(1)}% / {(catPlan.targetPercentage * 100).toFixed(1)}% Portfolio
+                      </span>
+                    </div>
+
+                    {/* Subcategory rebalancing */}
+                    {hasMultipleSubs && rebalSubVisible && (
+                      <div className="sub-rebalance-list">
+                        {catPlan.subcategories.map((sa) => (
+                          <div className="rebalance-item sub-rebalance-item" key={sa.subcategory} title={sa.tooltip}>
+                            <span className="sub-alloc-dot" style={{ background: sa.color }} />
+                            <span className="rebalance-item-name sub-rebalance-name">
+                              {sa.subcategory}
+                              {sa.isCoreAnchor && (
+                                <span style={{
+                                  marginLeft: 6,
+                                  fontSize: '0.66rem',
+                                  padding: '1px 5px',
+                                  borderRadius: 4,
+                                  background: 'rgba(240, 192, 64, 0.15)',
+                                  color: 'var(--gold)',
+                                  border: '1px solid rgba(240, 192, 64, 0.3)',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.02em',
+                                  verticalAlign: 'middle'
+                                }}>
+                                  Anker
+                                </span>
+                              )}
+                            </span>
+                            <span className="rebalance-deviation">
+                              {sa.deviation >= 0 ? '+' : ''}{(sa.deviation * 100).toFixed(1)} %
+                            </span>
+                            {sa.action === 'ok' || sa.action === 'hold' ? (
+                              <span className="rebalance-badge ok" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                                <Minus size={9} style={{ marginRight: 3 }} />
+                                {sa.badgeText}
+                              </span>
+                            ) : sa.action === 'buy' ? (
+                              <span className="rebalance-badge buy" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                                <TrendingUp size={9} style={{ marginRight: 3 }} />{sa.badgeText}
+                              </span>
+                            ) : (
+                              <span className="rebalance-badge sell" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                                <TrendingDown size={9} style={{ marginRight: 3 }} />{sa.badgeText}
                               </span>
                             )}
-                          </span>
-                          <span className="rebalance-deviation">
-                            {subDev >= 0 ? '+' : ''}{(subDev * 100).toFixed(1)} %
-                          </span>
-                          {subIsOk ? (
-                            <span className="rebalance-badge ok" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                              <Minus size={9} style={{ marginRight: 3 }} />
-                              {hasCoreReference && !isThisCore && !stocksIsOk ? 'Halten' : 'OK'}
-                            </span>
-                          ) : subDiff > 0 ? (
-                            <span className="rebalance-badge buy" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                              <TrendingUp size={9} style={{ marginRight: 3 }} />Buy {fmtEur(subAbsDiff)}
-                            </span>
-                          ) : (
-                            <span className="rebalance-badge sell" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                              <TrendingDown size={9} style={{ marginRight: 3 }} />Sell {fmtEur(subAbsDiff)}
-                            </span>
-                          )}
-                          {/* Coin recommendation badge for Silber */}
-                          {sa.subcategory === 'Silber' && subDiff > 0 && SILVER_OZ_PRICE_EUR > 0 && subAbsDiff >= SILVER_OZ_PRICE_EUR && (
-                            <span title={`Kaufempfehlung ≥ ${Math.floor(subAbsDiff / SILVER_OZ_PRICE_EUR)} oz Silber (${fmtEur(SILVER_OZ_PRICE_EUR)}/oz)`} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
-                              <Coins size={14} color="var(--text-secondary)" />
-                            </span>
-                          )}
-                          <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                            {hasCoreReference && !isThisCore && coreSub && coreSub.value > 0 ? (
-                              stocksIsOk ? (
-                                `${(actualRatioToCore * 100).toFixed(0)}% / ${(targetRatioToCore * 100).toFixed(0)}% Core`
-                              ) : (
-                                `${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
-                              )
-                            ) : (
-                              `${(subActualAbs * 100).toFixed(1)}% / ${(subAbsTarget * 100).toFixed(1)}% Portfolio`
+                            {sa.silverCoinCount > 0 && sa.silverCoinTooltip && (
+                              <span title={sa.silverCoinTooltip} style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}>
+                                <Coins size={14} color="var(--text-secondary)" />
+                              </span>
                             )}
-                          </span>
-                        </div>
-                      )
-                    })}
+                            <span className="rebalance-sub-actual" style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                              {sa.ratioLabel}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-      </>
+                )
+              })}
+            </div>
+          </div>
+        </>
       )}
 
       {activeTab === 'dimensions' && (
@@ -2158,7 +1876,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                   </div>
                 </div>
               </div>
-              
+
               {(excludedAssetKeys.size > 0 || excludedCategories.size > 0) && (
                 <div className="exclusion-editor-footer">
                   <button className="btn btn-sm btn-ghost btn-danger-ghost" onClick={handleResetExclusions}>
@@ -2179,66 +1897,66 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                 {/* Donut chart */}
                 <ResponsiveContainer width="100%" height={220}>
                   <PieChart>
-                  <Pie
-                    data={dimAllocation.map((a) => ({
-                      name: a.tag,
-                      value: a.percentage,
-                      color: a.color,
-                      targetPct: 0,
-                    }))}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={55}
-                    outerRadius={85}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {dimAllocation.map((a, i) => (
-                      <Cell key={i} fill={a.color} stroke="none" />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null
-                      const d = payload[0]
-                      const item = dimAllocation.find((a) => a.tag === d.name)
-                      return (
-                        <div style={{
-                          background: 'var(--bg-card)',
-                          border: '1px solid var(--border-accent)',
-                          borderRadius: 'var(--radius-md)',
-                          padding: '10px 14px',
-                          fontSize: '0.82rem',
-                          color: 'var(--text-primary)',
-                          boxShadow: 'var(--shadow-card)',
-                        }}>
-                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
-                          <div style={{ color: 'var(--text-secondary)' }}>
-                            {((d.value as number) * 100).toFixed(1)} % · {fmtEur(item?.value || 0)}
+                    <Pie
+                      data={dimAllocation.map((a) => ({
+                        name: a.tag,
+                        value: a.percentage,
+                        color: a.color,
+                        targetPct: 0,
+                      }))}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={85}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {dimAllocation.map((a, i) => (
+                        <Cell key={i} fill={a.color} stroke="none" />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null
+                        const d = payload[0]
+                        const item = dimAllocation.find((a) => a.tag === d.name)
+                        return (
+                          <div style={{
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border-accent)',
+                            borderRadius: 'var(--radius-md)',
+                            padding: '10px 14px',
+                            fontSize: '0.82rem',
+                            color: 'var(--text-primary)',
+                            boxShadow: 'var(--shadow-card)',
+                          }}>
+                            <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
+                            <div style={{ color: 'var(--text-secondary)' }}>
+                              {((d.value as number) * 100).toFixed(1)} % · {fmtEur(item?.value || 0)}
+                            </div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                              {item?.assetCount || 0} Assets
+                            </div>
                           </div>
-                          <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>
-                            {item?.assetCount || 0} Assets
-                          </div>
-                        </div>
-                      )
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              {/* Legend */}
-              <div className="legend">
-                {dimAllocation.map((a) => (
-                  <div className="legend-item" key={a.tag}>
-                    <span className="legend-dot" style={{ background: a.color }} />
-                    <span className="legend-name">{a.tag}</span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginRight: 4 }}>
-                      {a.assetCount}
-                    </span>
-                    <span className="legend-pct">{(a.percentage * 100).toFixed(1)} %</span>
-                  </div>
-                ))}
+                        )
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Legend */}
+                <div className="legend">
+                  {dimAllocation.map((a) => (
+                    <div className="legend-item" key={a.tag}>
+                      <span className="legend-dot" style={{ background: a.color }} />
+                      <span className="legend-name">{a.tag}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginRight: 4 }}>
+                        {a.assetCount}
+                      </span>
+                      <span className="legend-pct">{(a.percentage * 100).toFixed(1)} %</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
             </div>
           )}
 
@@ -2285,7 +2003,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             {selectedAssets.size > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-input)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-accent)', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600 }}>{selectedAssets.size} selected</span>
-                
+
                 {/* 1. Dropdown: WAS soll zugeordnet werden? */}
                 <select
                   className="cat-select"
@@ -2449,7 +2167,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                 <X size={14} /> Schließen
               </button>
             </div>
-            
+
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: 16 }}>
               {depositoryList.map(d => (
                 <div key={d} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
@@ -2509,9 +2227,9 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     const newSet = new Set(selectedAssets)
                     const allKeys = items.map(inv => investmentKey(inv))
                     if (e.target.checked) {
-                      allKeys.forEach(k => newSet.add(k))
+                      allKeys.forEach(k => { newSet.add(k) })
                     } else {
-                      allKeys.forEach(k => newSet.delete(k))
+                      allKeys.forEach(k => { newSet.delete(k) })
                     }
                     setSelectedAssets(newSet)
                   }}
@@ -2570,9 +2288,9 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                               const newSet = new Set(selectedAssets)
                               const allKeys = subItems.map(inv => investmentKey(inv))
                               if (e.target.checked) {
-                                allKeys.forEach(k => newSet.add(k))
+                                allKeys.forEach(k => { newSet.add(k) })
                               } else {
-                                allKeys.forEach(k => newSet.delete(k))
+                                allKeys.forEach(k => { newSet.delete(k) })
                               }
                               setSelectedAssets(newSet)
                             }}
@@ -2601,10 +2319,10 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                         {subOpen && (
                           <div style={{ overflowX: 'auto' }}>
                             {(cat === 'Safe-Haven Gold' || sub === 'Silber') && (
-                              <CoinSummary 
-                                subItems={subItems} 
-                                isSilver={sub === 'Silber'} 
-                                manualPrice={sub === 'Silber' ? manualSilverPrice : manualGoldPrice} 
+                              <CoinSummary
+                                subItems={subItems}
+                                isSilver={sub === 'Silber'}
+                                manualPrice={sub === 'Silber' ? manualSilverPrice : manualGoldPrice}
                                 onSavePrice={val => sub === 'Silber' ? setManualSilverPrice(val) : setManualGoldPrice(val)}
                                 isLoading={metalPricesLoading === 'both' || metalPricesLoading === (sub === 'Silber' ? 'silver' : 'gold')}
                                 onFetchPrice={() => handleFetchSingleMetalPrice(sub === 'Silber' ? 'silver' : 'gold')}
@@ -2614,15 +2332,15 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                               <thead>
                                 <tr>
                                   <th style={{ width: 28, textAlign: 'center' }}>
-                                    <input 
-                                      type="checkbox" 
+                                    <input
+                                      type="checkbox"
                                       onChange={(e) => {
                                         const newSet = new Set(selectedAssets)
                                         const allKeys = subItems.map(inv => investmentKey(inv))
                                         if (e.target.checked) {
-                                          allKeys.forEach(k => newSet.add(k))
+                                          allKeys.forEach(k => { newSet.add(k) })
                                         } else {
-                                          allKeys.forEach(k => newSet.delete(k))
+                                          allKeys.forEach(k => { newSet.delete(k) })
                                         }
                                         setSelectedAssets(newSet)
                                       }}
@@ -2656,10 +2374,10 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                   const isExcluded = isCatExcluded || isAssetExcludedExplicitly
                                   const isRowDimmed = activeTab === 'dimensions' && isExcluded
                                   return (
-                                    <tr key={inv.isin + inv.name} className={isRowDimmed ? 'dimmed-row' : undefined}>
+                                    <tr key={key} className={isRowDimmed ? 'dimmed-row' : undefined}>
                                       <td style={{ textAlign: 'center' }}>
-                                        <input 
-                                          type="checkbox" 
+                                        <input
+                                          type="checkbox"
                                           checked={selectedAssets.has(key)}
                                           onChange={(e) => {
                                             const newSet = new Set(selectedAssets)
@@ -2833,10 +2551,10 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                                 e.stopPropagation()
                                                 handleToggleAssetExclusion(key)
                                               }}
-                                              title={isCatExcluded 
-                                                ? `Ausgeschlossen über Kategorie "${inv.category}"` 
-                                                : isAssetExcludedExplicitly 
-                                                  ? "Asset wieder einschließen" 
+                                              title={isCatExcluded
+                                                ? `Ausgeschlossen über Kategorie "${inv.category}"`
+                                                : isAssetExcludedExplicitly
+                                                  ? "Asset wieder einschließen"
                                                   : "Asset ausschließen"
                                               }
                                             >
@@ -2968,178 +2686,185 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                 <X size={16} />
               </button>
             </div>
-            
+
             <div style={{ display: 'flex', gap: '12px', marginBottom: 20, alignItems: 'center', background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', flexWrap: 'wrap' }}>
-               <label style={{ fontSize: '0.88rem', fontWeight: 600 }}>Gesamtmenge in Unzen:</label>
-               {(() => {
-                 const modalIsinUpper = splitModalAsset.isin?.toUpperCase() || ''
-                 const modalNameUpper = splitModalAsset.name.toUpperCase()
-                 const isGramGold = GRAM_GOLD_ETFS.includes(modalIsinUpper) || modalNameUpper.includes('XETRA-GOLD') || modalNameUpper.includes('EUWAX GOLD')
-                 const isXtrackersSilver = modalIsinUpper === 'DE000A2T0VS9' || modalNameUpper.includes('SILBER 80')
-                 const isOneOzSilver = Boolean(splitModalAsset.isin && modalIsinUpper !== 'N/A' && (modalNameUpper.includes('SILBER') || modalNameUpper.includes('SILVER') || modalIsinUpper === 'XC0009653103'))
-                 const isAutoOunces = isGramGold || isXtrackersSilver || isOneOzSilver
-                 const displayTotalOunces = isGramGold
-                   ? ((splitModalAsset.quantity || 0) / TROY_OZ_IN_GRAMS).toFixed(3)
-                   : isXtrackersSilver
-                     ? ((splitModalAsset.quantity || 0) * XTRACKERS_SILVER_OZ_PER_SHARE).toFixed(3)
-                     : isOneOzSilver
-                       ? (splitModalAsset.quantity || 0).toFixed(3)
-                       : splitConfig.totalOunces
-                 return (
-                   <>
-                     <input
-                       type="number"
-                       step="0.01"
-                       value={displayTotalOunces}
-                       disabled={isAutoOunces}
-                       onChange={e => {
-                         const val = parseFloat(e.target.value) || 0
-                         setSplitConfigState(prev => prev ? ({ ...prev, totalOunces: val }) : prev)
-                       }}
-                       style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: isAutoOunces ? 0.6 : 1 }}
-                     />
-                     {isAutoOunces && (
-                       <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
-                     )}
-                   </>
-                 )
-               })()}
-               <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                 Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {(splitModalAsset.currentValue || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
-               </span>
+              <label style={{ fontSize: '0.88rem', fontWeight: 600 }}>Gesamtmenge in Unzen:</label>
+              {(() => {
+                const modalIsinUpper = splitModalAsset.isin?.toUpperCase() || ''
+                const modalNameUpper = splitModalAsset.name.toUpperCase()
+                const isGramGold = GRAM_GOLD_ETFS.includes(modalIsinUpper) || modalNameUpper.includes('XETRA-GOLD') || modalNameUpper.includes('EUWAX GOLD')
+                const isXtrackersSilver = modalIsinUpper === 'DE000A2T0VS9' || modalNameUpper.includes('SILBER 80')
+                const isOneOzSilver = Boolean(splitModalAsset.isin && modalIsinUpper !== 'N/A' && (modalNameUpper.includes('SILBER') || modalNameUpper.includes('SILVER') || modalIsinUpper === 'XC0009653103'))
+                const isAutoOunces = isGramGold || isXtrackersSilver || isOneOzSilver
+                const displayTotalOunces = isGramGold
+                  ? ((splitModalAsset.quantity || 0) / TROY_OZ_IN_GRAMS).toFixed(3)
+                  : isXtrackersSilver
+                    ? ((splitModalAsset.quantity || 0) * XTRACKERS_SILVER_OZ_PER_SHARE).toFixed(3)
+                    : isOneOzSilver
+                      ? (splitModalAsset.quantity || 0).toFixed(3)
+                      : splitConfig.totalOunces
+                return (
+                  <>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={displayTotalOunces}
+                      disabled={isAutoOunces}
+                      onChange={e => {
+                        const val = parseFloat(e.target.value) || 0
+                        setSplitConfigState(prev => prev ? ({ ...prev, totalOunces: val }) : prev)
+                      }}
+                      style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: isAutoOunces ? 0.6 : 1 }}
+                    />
+                    {isAutoOunces && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
+                    )}
+                  </>
+                )
+              })()}
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {(splitModalAsset.currentValue || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+              </span>
             </div>
 
             <div style={{ maxHeight: '40vh', overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginBottom: 20, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
               <table className="holdings-table" style={{ margin: 0 }}>
-                 <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)' }}>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)' }}>
+                  <tr>
+                    <th style={{ width: '220px', padding: '10px 14px' }}>Name der Münze</th>
+                    <th style={{ width: '110px', padding: '10px 14px' }}>Einheit (z.B. 1 oz)</th>
+                    <th style={{ width: '90px', padding: '10px 14px' }}>Anzahl</th>
+                    <th style={{ padding: '10px 14px' }}>Lagerstätte</th>
+                    <th style={{ width: '50px', padding: '10px 14px', textAlign: 'center' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {splitConfig.splits.length === 0 ? (
                     <tr>
-                       <th style={{ width: '220px', padding: '10px 14px' }}>Name der Münze</th>
-                       <th style={{ width: '110px', padding: '10px 14px' }}>Einheit (z.B. 1 oz)</th>
-                       <th style={{ width: '90px', padding: '10px 14px' }}>Anzahl</th>
-                       <th style={{ padding: '10px 14px' }}>Lagerstätte</th>
-                       <th style={{ width: '50px', padding: '10px 14px', textAlign: 'center' }}></th>
+                      <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                        Keine Münzen definiert. Klicke unten auf "Münze hinzufügen".
+                      </td>
                     </tr>
-                 </thead>
-                 <tbody>
-                    {splitConfig.splits.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-                          Keine Münzen definiert. Klicke unten auf "Münze hinzufügen".
+                  ) : (
+                    splitConfig.splits.map((s, i) => (
+                      <tr key={s.id || `split-${i}`}>
+                        <td style={{ padding: '8px 12px' }}>
+                          <input type="text" value={s.name} onChange={e => {
+                            const val = e.target.value
+                            setSplitConfigState(prev => {
+                              if (!prev) return prev
+                              const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, name: val } : it)
+                              return { ...prev, splits: newSplits }
+                            })
+                          }} onKeyDown={e => {
+                            if (e.key === ' ') e.stopPropagation()
+                          }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <input type="text" value={s.denomination} onChange={e => {
+                            const val = e.target.value
+                            setSplitConfigState(prev => {
+                              if (!prev) return prev
+                              const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, denomination: val } : it)
+                              return { ...prev, splits: newSplits }
+                            })
+                          }} onKeyDown={e => {
+                            if (e.key === ' ') e.stopPropagation()
+                          }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <input type="number" value={s.coinCount} onChange={e => {
+                            const val = parseFloat(e.target.value) || 0
+                            setSplitConfigState(prev => {
+                              if (!prev) return prev
+                              const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, coinCount: val } : it)
+                              return { ...prev, splits: newSplits }
+                            })
+                          }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)', textAlign: 'right' }} />
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <select value={s.depository} onChange={e => {
+                            const val = e.target.value
+                            setSplitConfigState(prev => {
+                              if (!prev) return prev
+                              const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, depository: val } : it)
+                              return { ...prev, splits: newSplits }
+                            })
+                          }} className="cat-select sub-select" style={{ width: '100%', padding: '6px 8px', height: 'auto', background: 'var(--bg-input)' }}>
+                            <option value="">—</option>
+                            {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                          <button type="button" className="btn btn-ghost" onClick={() => {
+                            setSplitConfigState(prev => {
+                              if (!prev) return prev
+                              return { ...prev, splits: prev.splits.filter((_, idx) => idx !== i) }
+                            })
+                          }} style={{ padding: 4, display: 'inline-flex', justifyContent: 'center', alignItems: 'center' }}>
+                            <Trash2 size={14} color="var(--red)" />
+                          </button>
                         </td>
                       </tr>
-                    ) : (
-                      splitConfig.splits.map((s, i) => (
-                        <tr key={s.id || `split-${i}`}>
-                           <td style={{ padding: '8px 12px' }}>
-                              <input type="text" value={s.name} onChange={e => {
-                                 const val = e.target.value
-                                 setSplitConfigState(prev => {
-                                    if (!prev) return prev
-                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, name: val } : it)
-                                    return { ...prev, splits: newSplits }
-                                 })
-                              }} onKeyDown={e => {
-                                 if (e.key === ' ') e.stopPropagation()
-                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-                           </td>
-                           <td style={{ padding: '8px 12px' }}>
-                              <input type="text" value={s.denomination} onChange={e => {
-                                 const val = e.target.value
-                                 setSplitConfigState(prev => {
-                                    if (!prev) return prev
-                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, denomination: val } : it)
-                                    return { ...prev, splits: newSplits }
-                                 })
-                              }} onKeyDown={e => {
-                                 if (e.key === ' ') e.stopPropagation()
-                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-                           </td>
-                           <td style={{ padding: '8px 12px' }}>
-                              <input type="number" value={s.coinCount} onChange={e => {
-                                 const val = parseFloat(e.target.value) || 0
-                                 setSplitConfigState(prev => {
-                                    if (!prev) return prev
-                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, coinCount: val } : it)
-                                    return { ...prev, splits: newSplits }
-                                 })
-                              }} style={{ width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)', textAlign: 'right' }} />
-                           </td>
-                           <td style={{ padding: '8px 12px' }}>
-                              <select value={s.depository} onChange={e => {
-                                 const val = e.target.value
-                                 setSplitConfigState(prev => {
-                                    if (!prev) return prev
-                                    const newSplits = prev.splits.map((it, idx) => idx === i ? { ...it, depository: val } : it)
-                                    return { ...prev, splits: newSplits }
-                                 })
-                              }} className="cat-select sub-select" style={{ width: '100%', padding: '6px 8px', height: 'auto', background: 'var(--bg-input)' }}>
-                                 <option value="">—</option>
-                                 {depositoryList.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
-                           </td>
-                           <td style={{ padding: '8px 12px', textAlign: 'center' }}>
-                              <button type="button" className="btn btn-ghost" onClick={() => {
-                                 setSplitConfigState(prev => {
-                                    if (!prev) return prev
-                                    return { ...prev, splits: prev.splits.filter((_, idx) => idx !== i) }
-                                 })
-                              }} style={{ padding: 4, display: 'inline-flex', justifyContent: 'center', alignItems: 'center' }}>
-                                 <Trash2 size={14} color="var(--red)" />
-                              </button>
-                           </td>
-                        </tr>
-                      ))
-                    )}
-                 </tbody>
+                    ))
+                  )}
+                </tbody>
               </table>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-               <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
-                  setSplitConfigState(prev => {
-                     if (!prev) return prev
-                     const prevSplits = Array.isArray(prev.splits) ? prev.splits : []
-                     const isSilver = (splitModalAsset?.name || '').toLowerCase().includes('silber') ||
-                                      (splitModalAsset?.name || '').toLowerCase().includes('silver') ||
-                                      splitModalAsset?.subcategory === 'Silber'
-                     return {
-                        ...prev,
-                        splits: [
-                           ...prevSplits,
-                           {
-                              id: Math.random().toString(36).substring(2, 9),
-                              name: isSilver ? 'Philharmoniker Silber' : 'Philharmoniker',
-                              denomination: '1 oz',
-                              coinCount: 1,
-                              depository: ''
-                           }
-                        ]
-                     }
-                  })
-               }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', minHeight: '38px', cursor: 'pointer', touchAction: 'manipulation' }}>
-                  <Plus size={14} /> Münze hinzufügen
-               </button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+                setSplitConfigState(prev => {
+                  if (!prev) return prev
+                  const prevSplits = Array.isArray(prev.splits) ? prev.splits : []
+                  const isSilver = (splitModalAsset?.name || '').toLowerCase().includes('silber') ||
+                    (splitModalAsset?.name || '').toLowerCase().includes('silver') ||
+                    splitModalAsset?.subcategory === 'Silber'
+                  return {
+                    ...prev,
+                    splits: [
+                      ...prevSplits,
+                      {
+                        id: Math.random().toString(36).substring(2, 9),
+                        name: isSilver ? 'Philharmoniker Silber' : 'Philharmoniker',
+                        denomination: '1 oz',
+                        coinCount: 1,
+                        depository: ''
+                      }
+                    ]
+                  }
+                })
+              }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', minHeight: '38px', cursor: 'pointer', touchAction: 'manipulation' }}>
+                <Plus size={14} /> Münze hinzufügen
+              </button>
 
-               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  {splitConfig.splits.length > 0 && (
-                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
-                        if (window.confirm('Möchtest du die Münzstückelung wirklich aufheben?')) {
-                           deleteSplitConfig(splitConfig.assetKey)
-                           setSplitModalAsset(null)
-                           setOriginalSplitConfig(null)
-                           setSplitVersion(v => v + 1)
-                        }
-                     }} style={{ color: 'var(--red)', padding: '8px 14px' }}>
-                        Split aufheben
-                     </button>
-                  )}
-                  <button type="button" className="btn btn-sm btn-ghost" onClick={handleCloseSplitModal} style={{ padding: '8px 14px' }}>
-                     Abbrechen
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {splitConfig.splits.length > 0 && (
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+                    setConfirmDialog({
+                      title: 'Münzstückelung aufheben',
+                      message: 'Möchtest du die Münzstückelung wirklich aufheben?',
+                      confirmLabel: 'Split aufheben',
+                      danger: true,
+                      onConfirm: () => {
+                        setConfirmDialog(null)
+                        deleteSplitConfig(splitConfig.assetKey)
+                        setSplitModalAsset(null)
+                        setOriginalSplitConfig(null)
+                        setSplitVersion(v => v + 1)
+                      },
+                    })
+                  }} style={{ color: 'var(--red)', padding: '8px 14px' }}>
+                    Split aufheben
                   </button>
-                  <button type="button" className="btn btn-sm btn-gold" onClick={handleSaveSplit} style={{ padding: '8px 18px', fontWeight: 600 }}>
-                     Speichern
-                  </button>
-               </div>
+                )}
+                <button type="button" className="btn btn-sm btn-ghost" onClick={handleCloseSplitModal} style={{ padding: '8px 14px' }}>
+                  Abbrechen
+                </button>
+                <button type="button" className="btn btn-sm btn-gold" onClick={handleSaveSplit} style={{ padding: '8px 18px', fontWeight: 600 }}>
+                  Speichern
+                </button>
+              </div>
             </div>
           </div>
         </div>,
@@ -3163,6 +2888,22 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
         onExportOverrides={exportBrokerOverrides}
         onImportOverrides={handleImportBrokerOverrides}
       />
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        confirmLabel={confirmDialog?.confirmLabel}
+        danger={confirmDialog?.danger}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        onCancel={() => setConfirmDialog(null)}
+      />
+
+      {importMsg && (
+        <div className="dashboard-toast" role="status">
+          {importMsg}
+        </div>
+      )}
     </div>
   )
 }

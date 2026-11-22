@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { RotateCcw, ArrowRightLeft, Plus, Minus, Check } from 'lucide-react'
 import type { CorePosition } from '../../utils/core/types'
+import { fmtEur as fmtEurShared } from '../../shared/lib/format'
 
 interface CoreSimulatorProps {
   positions: CorePosition[]
@@ -11,7 +12,7 @@ interface CoreSimulatorProps {
 }
 
 function fmtEur(v: number): string {
-  return `€ ${v.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+  return fmtEurShared(v, 0)
 }
 
 export const CoreSimulator: React.FC<CoreSimulatorProps> = ({

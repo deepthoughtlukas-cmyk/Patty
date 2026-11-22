@@ -27,6 +27,7 @@ import {
   type CoreRoadmap,
   type SparplanItem,
 } from '../../utils/core/coreOptimizer'
+import { fmtEur as fmtEurShared } from '../../shared/lib/format'
 
 interface CoreRoadmapPanelProps {
   positions: CorePosition[]
@@ -49,7 +50,7 @@ interface CoreRoadmapPanelProps {
 }
 
 function fmtEur(v: number): string {
-  return `€ ${Math.round(v).toLocaleString('de-DE')}`
+  return fmtEurShared(v, 0)
 }
 
 export const CoreRoadmapPanel: React.FC<CoreRoadmapPanelProps> = ({
