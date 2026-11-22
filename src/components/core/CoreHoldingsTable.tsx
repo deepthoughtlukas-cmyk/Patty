@@ -1,6 +1,7 @@
 import React from 'react'
 import { Eye, HelpCircle } from 'lucide-react'
 import type { CorePosition, CoreProfile, CoreRole } from '../../utils/core/types'
+import { isFrontierProfile, isSingleCountryTilt } from '../../utils/core/countries'
 import { fmtEur } from '../../shared/lib/format'
 
 interface CoreHoldingsTableProps {
@@ -97,6 +98,16 @@ export const CoreHoldingsTable: React.FC<CoreHoldingsTableProps> = ({
                             Depot
                           </span>
                         )}
+                        {isFrontierProfile(p) && (
+                          <span className="core-satellite-badge" title="Entwicklungsländer / Frontier Markets (getrennt von EM)">
+                            Frontier
+                          </span>
+                        )}
+                        {!isFrontierProfile(p) && isSingleCountryTilt(p) && (
+                          <span className="core-satellite-badge" title="Einzelland-ETF innerhalb einer Regionen-Gruppe">
+                            Einzelland
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <span style={{ color: 'var(--red)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -111,7 +122,14 @@ export const CoreHoldingsTable: React.FC<CoreHoldingsTableProps> = ({
                         onChange={(e) => onRoleChange(p.id, e.target.value as CoreRole)}
                         style={{
                           background: 'var(--bg-surface)',
-                          color: pos.role === 'factor' ? 'var(--gold)' : pos.role === 'cashflow' ? 'var(--purple)' : 'var(--text-primary)',
+                          color:
+                            pos.role === 'factor'
+                              ? 'var(--gold)'
+                              : pos.role === 'cashflow'
+                                ? 'var(--purple)'
+                                : pos.role === 'satellite'
+                                  ? '#e879f9'
+                                  : 'var(--text-primary)',
                           border: '1px solid var(--border)',
                           borderRadius: 'var(--radius-sm)',
                           fontSize: '0.78rem',
@@ -122,6 +140,7 @@ export const CoreHoldingsTable: React.FC<CoreHoldingsTableProps> = ({
                         <option value="market">Markt-/Regionen-Core</option>
                         <option value="factor">Faktor-Budget (Cap 20 %)</option>
                         <option value="cashflow">Dividenden-Satellit</option>
+                        <option value="satellite">Beimischung / Satellit</option>
                       </select>
                     ) : (
                       <span style={{ color: 'var(--text-muted)' }}>-</span>

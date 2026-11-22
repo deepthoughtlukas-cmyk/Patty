@@ -1,5 +1,6 @@
 import { BUILTIN_PROFILES } from '../../utils/core/builtinProfiles'
 import { getAllProfiles } from '../../utils/core/profileStore'
+import { DEFAULT_FRONTIER_CAP } from '../../utils/core/targets'
 import type { CorePosition, CoreProfile, TargetStage } from '../../utils/core/types'
 import { optimizeExistingCoreSparplan } from './roadmapPlanner'
 
@@ -29,7 +30,8 @@ export function optimizeCoreOrders(
   targetStage: TargetStage,
   budget: number,
   mode: 'buy-only' | 'rebalance' = 'buy-only',
-  minOrderSize = 25
+  minOrderSize = 25,
+  frontierCap = DEFAULT_FRONTIER_CAP
 ): OptimizationResult {
   const allProfiles = getAllProfiles()
   const profileMap = new Map(allProfiles.map((p) => [p.id, p]))
@@ -38,6 +40,7 @@ export function optimizeCoreOrders(
   if (mode === 'buy-only' && activeExistingPositions.length > 0) {
     const sparplanItems = optimizeExistingCoreSparplan(activeExistingPositions, targetStage, budget, {
       maxPositions: 4,
+      frontierCap,
     })
 
     const orders: OrderRecommendation[] = sparplanItems.map((item) => ({

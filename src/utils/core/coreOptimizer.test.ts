@@ -160,4 +160,97 @@ describe('coreOptimizer logic with existing ETFs & projection', () => {
     expect(candidateRoadmap.phases.length).toBeGreaterThanOrEqual(1)
     expect(candidateRoadmap.phases[0].allocations.some((a) => a.isCandidate)).toBe(true)
   })
+
+  it('caps Frontier ETF separately from EM and excludes dividend satellites from Stage 2 Sparplan', () => {
+    const frontierProfile = BUILTIN_PROFILES.find((p) => p.id === 'xtrackers-sp-select-frontier')!
+    const positionsWithFrontier: CorePosition[] = [
+      ...userPositions,
+      {
+        key: 'pos-frontier',
+        name: 'XTRACKERS S&P SELECT FRONTIER SWAP ETF',
+        value: 200, // ~1% of ~20.1k Core
+        profile: frontierProfile,
+        role: frontierProfile.role,
+      },
+    ]
+
+    const sparplan = optimizeExistingCoreSparplan(positionsWithFrontier, stage2, 350, {
+      maxPositions: 4,
+      frontierCap: 0.03,
+    })
+
+    const frontierItem = sparplan.find((s) => s.key === 'pos-frontier')
+    const emItem = sparplan.find((s) => s.key === 'pos-avantis-em')
+    const cashflowItem = sparplan.find((s) => s.key === 'pos-pan-asia')
+
+    expect(cashflowItem).toBeUndefined()
+    expect(emItem).toBeDefined()
+    expect(frontierItem).toBeDefined()
+    expect(frontierItem!.isSatellite).toBe(true)
+    expect(frontierItem!.amount).toBeLessThanOrEqual(350 * 0.15)
+    expect(frontierItem!.amount).toBeLessThan(emItem!.amount)
+
+    // When frontierCap is 0 (or already >= 3%), Frontier receives 0 EUR
+    const pausedPlan = optimizeExistingCoreSparplan(positionsWithFrontier, stage2, 350, {
+      maxPositions: 4,
+      frontierCap: 0,
+    })
+    expect(pausedPlan.find((s) => s.key === 'pos-frontier')).toBeUndefined()
+
+    const alreadyAtCapPositions = positionsWithFrontier.map((p) =>
+      p.key === 'pos-frontier' ? { ...p, value: 1200 } : p
+    )
+    const atCapPlan = optimizeExistingCoreSparplan(alreadyAtCapPositions, stage2, 350, {
+      maxPositions: 4,
+      frontierCap: 0.03,
+    })
+    expect(atCapPlan.find((s) => s.key === 'pos-frontier')).toBeUndefined()
+
+    // In phased roadmap, Frontier allocation drops out once the 3% cap is reached
+    const roadmap = buildPhasedRoadmap(positionsWithFrontier, stage2, 350, {
+      maxPositions: 4,
+      maxMonths: 24,
+      frontierCap: 0.03,
+    })
+    expect(roadmap.phases.length).toBeGreaterThanOrEqual(1)
+    const lastPhase = roadmap.phases[roadmap.phases.length - 1]
+    expect(lastPhase.allocations.find((a) => a.key === 'pos-frontier')).toBeUndefined()
+  })
+
+  it('excludes India single-country ETF from filling EM gap and flags missing EM access in diagnostics', () => {
+    const indiaProfile = BUILTIN_PROFILES.find((p) => p.id === 'ishares-msci-india')!
+    const frontierProfile = BUILTIN_PROFILES.find((p) => p.id === 'xtrackers-sp-select-frontier')!
+
+    const positionsWithoutBroadEm: CorePosition[] = [
+      userPositions[1], // MSCI World (7200)
+      {
+        key: 'pos-india',
+        name: 'ISHARES MSCI INDIA ETF',
+        value: 500,
+        profile: indiaProfile,
+        role: indiaProfile.role,
+      },
+      {
+        key: 'pos-frontier',
+        name: 'XTRACKERS S&P SELECT FRONTIER SWAP ETF',
+        value: 500,
+        profile: frontierProfile,
+        role: frontierProfile.role,
+      },
+    ]
+
+    const exp = computeCoreExposure(positionsWithoutBroadEm)
+    const targetExp = computeStageTargetExposure(stage2, BUILTIN_PROFILES)
+    const diagnostics = diagnoseCoreGaps(positionsWithoutBroadEm, exp, stage2, targetExp, 0.03)
+
+    expect(diagnostics.map((d) => d.id)).toContain('missing-region-access')
+    expect(diagnostics.map((d) => d.id)).toContain('frontier-over-cap')
+
+    const sparplan = optimizeExistingCoreSparplan(positionsWithoutBroadEm, stage2, 350, {
+      maxPositions: 4,
+      frontierCap: 0.03,
+    })
+    // India satellite is not used as automatic core filler
+    expect(sparplan.find((s) => s.key === 'pos-india')).toBeUndefined()
+  })
 })

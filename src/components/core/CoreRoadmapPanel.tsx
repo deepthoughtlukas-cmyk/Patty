@@ -21,6 +21,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import type { CoreExposure, CorePosition, TargetStage } from '../../utils/core/types'
+import { DEFAULT_FRONTIER_CAP } from '../../utils/core/targets'
 import {
   optimizeCoreOrders,
   type CoreGapDiagnostic,
@@ -43,6 +44,9 @@ interface CoreRoadmapPanelProps {
   onMaxPositionsChange: (val: number) => void
   projectionHorizon: number
   onProjectionHorizonChange: (val: number) => void
+  hasFrontierPosition?: boolean
+  frontierCap?: number
+  onFrontierCapChange?: (val: number) => void
   roadmap: CoreRoadmap
   diagnostics: CoreGapDiagnostic[]
   onApplyToSimulator: (deltas: Record<string, number>) => void
@@ -65,6 +69,9 @@ export const CoreRoadmapPanel: React.FC<CoreRoadmapPanelProps> = ({
   onMaxPositionsChange,
   projectionHorizon,
   onProjectionHorizonChange,
+  hasFrontierPosition = false,
+  frontierCap = DEFAULT_FRONTIER_CAP,
+  onFrontierCapChange,
   roadmap,
   diagnostics,
   onApplyToSimulator,
@@ -78,8 +85,8 @@ export const CoreRoadmapPanel: React.FC<CoreRoadmapPanelProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const oneOffResult = useMemo(() => {
-    return optimizeCoreOrders(positions, targetStage, oneOffBudget, oneOffMode)
-  }, [positions, targetStage, oneOffBudget, oneOffMode])
+    return optimizeCoreOrders(positions, targetStage, oneOffBudget, oneOffMode, 25, frontierCap)
+  }, [positions, targetStage, oneOffBudget, oneOffMode, frontierCap])
 
   const chartData = useMemo(() => {
     return roadmap.timeline.map((p) => ({
@@ -209,6 +216,28 @@ export const CoreRoadmapPanel: React.FC<CoreRoadmapPanelProps> = ({
                 inkl. Ziel-ETFs
               </button>
             </div>
+
+            {hasFrontierPosition && onFrontierCapChange && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <span>Frontier-Cap:</span>
+                <div className="core-scenario-pills" aria-label="Frontier-Cap">
+                  {[
+                    { value: 0, label: 'Aus' },
+                    { value: 0.03, label: '3 %' },
+                    { value: 0.05, label: '5 %' },
+                  ].map((opt) => (
+                    <button
+                      type="button"
+                      key={opt.value}
+                      className={`core-scenario-pill ${Math.abs(frontierCap - opt.value) < 0.001 ? 'active' : ''}`}
+                      onClick={() => onFrontierCapChange(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {suggestedCoreBuy > 0 && monthlyBudget !== suggestedCoreBuy && (
               <button
@@ -402,6 +431,9 @@ export const CoreRoadmapPanel: React.FC<CoreRoadmapPanelProps> = ({
                               </span>
                               {item.isCandidate && (
                                 <span className="core-new-badge">Neu</span>
+                              )}
+                              {item.isSatellite && (
+                                <span className="core-satellite-badge">Beimischung</span>
                               )}
                             </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>

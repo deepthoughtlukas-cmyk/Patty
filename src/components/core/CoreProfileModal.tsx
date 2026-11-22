@@ -54,7 +54,13 @@ export const CoreProfileModal: React.FC<CoreProfileModalProps> = ({ profile, onC
           <div>
             <div style={{ color: 'var(--text-muted)' }}>Rolle:</div>
             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-              {profile.role === 'factor' ? 'Faktor-ETF (Cap 20 %)' : profile.role === 'cashflow' ? 'Dividenden-Satellit' : 'Markt-Core'}
+              {profile.role === 'factor'
+                ? 'Faktor-ETF (Cap 20 %)'
+                : profile.role === 'cashflow'
+                  ? 'Dividenden-Satellit'
+                  : profile.role === 'satellite'
+                    ? `Beimischung / Satellit${typeof profile.maxCoreWeight === 'number' ? ` (Cap ${(profile.maxCoreWeight * 100).toFixed(0)} %)` : ''}`
+                    : 'Markt-Core'}
             </div>
           </div>
           <div>

@@ -3,7 +3,7 @@ import { investmentKey, validIsin } from '../userRules'
 import { currencyOf, regionOf, ALL_FACTORS } from './countries'
 import { BUILTIN_PROFILES } from './builtinProfiles'
 import { getAllProfiles, loadRoleOverrides } from './profileStore'
-import { FACTOR_BUDGET_CAP, REGION_TOLERANCE } from './targets'
+import { DEFAULT_FRONTIER_CAP, FACTOR_BUDGET_CAP, REGION_TOLERANCE } from './targets'
 import type { CoreExposure, CorePosition, CoreProfile, CoreRole, FactorKey, RegionKey, SizeSplit, TargetStage } from './types'
 
 /**
@@ -84,11 +84,11 @@ export function computeCoreExposure(
   const coverage = total > 0 ? covered / total : 0
 
   const countries: Record<string, number> = {}
-  const regions: Record<RegionKey, number> = { US: 0, CA: 0, EU: 0, JP: 0, PAC: 0, EM: 0 }
+  const regions: Record<RegionKey, number> = { US: 0, CA: 0, EU: 0, JP: 0, PAC: 0, EM: 0, FM: 0 }
   const currencies: Record<string, number> = {}
   const size: SizeSplit = { large: 0, mid: 0, small: 0 }
   const factors: Record<FactorKey, number> = { quality: 0, value: 0, momentum: 0, lowVol: 0, dividend: 0, size: 0 }
-  const roleSums: Record<CoreRole, number> = { market: 0, factor: 0, cashflow: 0 }
+  const roleSums: Record<CoreRole, number> = { market: 0, factor: 0, cashflow: 0, satellite: 0 }
   let weightedTerSum = 0
   let terWeightTotal = 0
 
@@ -102,6 +102,7 @@ export function computeCoreExposure(
     market: total > 0 ? roleSums.market / total : 0,
     factor: total > 0 ? roleSums.factor / total : 0,
     cashflow: total > 0 ? roleSums.cashflow / total : 0,
+    satellite: total > 0 ? roleSums.satellite / total : 0,
   }
 
   // 2. Look-Through Aggregation über abgedeckte Positionen
@@ -184,6 +185,9 @@ export interface CoreFitSummary {
   smallCapTarget: number
   smallCapInBand: boolean
   factorOverBudget: boolean
+  frontierActual: number
+  frontierCap: number
+  frontierOverCap: boolean
 }
 
 /**
@@ -218,7 +222,8 @@ export function computeStageTargetExposure(
 export function computeCoreFitSummary(
   exposure: CoreExposure,
   targetStage: TargetStage,
-  targetExposure: CoreExposure
+  targetExposure: CoreExposure,
+  frontierCap = DEFAULT_FRONTIER_CAP
 ): CoreFitSummary {
   const regionGaps: RegionGapItem[] = targetStage.groups.map((group) => {
     const actual = group.regions.reduce((s, r) => s + (exposure.regions[r] || 0), 0)
@@ -257,8 +262,13 @@ export function computeCoreFitSummary(
   const smallCapDiff = Math.abs(smallCapActual - smallCapTarget)
   const sizePenalty = targetStage.id === 'stage3' ? Math.max(0, smallCapDiff - 0.01) * 120 : 0
   const factorPenalty = Math.max(0, exposure.roleShares.factor - FACTOR_BUDGET_CAP) * 50
+  const frontierActual = exposure.regions.FM || 0
+  const frontierOverCap = frontierCap > 0 && frontierActual > frontierCap + 0.005
+  const frontierPenalty = frontierOverCap ? Math.max(0, frontierActual - frontierCap) * 40 : 0
 
-  const score = Math.round(Math.max(0, Math.min(100, 100 - l1Regions * 110 - sizePenalty - factorPenalty)))
+  const score = Math.round(
+    Math.max(0, Math.min(100, 100 - l1Regions * 110 - sizePenalty - factorPenalty - frontierPenalty))
+  )
   const smallCapInBand = targetStage.id === 'stage2' ? true : smallCapDiff <= 0.025
   const factorOverBudget = exposure.roleShares.factor > FACTOR_BUDGET_CAP
 
@@ -273,5 +283,8 @@ export function computeCoreFitSummary(
     smallCapTarget,
     smallCapInBand,
     factorOverBudget,
+    frontierActual,
+    frontierCap,
+    frontierOverCap,
   }
 }

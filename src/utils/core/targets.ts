@@ -4,6 +4,12 @@ import type { TargetStage } from './types'
 export const REGION_TOLERANCE = 0.03
 /** Faktor-Budget laut Whitepaper Seite 11: "maximal etwa 20 Prozent des Cores" */
 export const FACTOR_BUDGET_CAP = 0.2
+/** Standard-Deckel für Frontier-/Entwicklungsländer im Core (3 % des Core-Volumens) */
+export const DEFAULT_FRONTIER_CAP = 0.03
+/** Maximaler Anteil einer einzelnen Frontier-Beimischung an der monatlichen Sparrate */
+export const FRONTIER_MAX_BUDGET_SHARE = 0.15
+/** Standard-Deckel für sonstige Satelliten-/Einzelland-Beimischungen */
+export const DEFAULT_SATELLITE_CAP = 0.05
 
 /**
  * Soll-Modelle aus dem Leitfaden "Core-Satellite-Strategie".

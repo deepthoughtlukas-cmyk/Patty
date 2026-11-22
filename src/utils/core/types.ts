@@ -1,7 +1,7 @@
 import type { Investment } from '../parser'
 
-/** Grobe Regionen-Buckets, auf denen die Whitepaper-Soll-Quoten definiert sind */
-export type RegionKey = 'US' | 'CA' | 'EU' | 'JP' | 'PAC' | 'EM'
+/** Grobe Regionen-Buckets, auf denen die Whitepaper-Soll-Quoten definiert sind (inkl. FM für Frontier/Entwicklungsländer) */
+export type RegionKey = 'US' | 'CA' | 'EU' | 'JP' | 'PAC' | 'EM' | 'FM'
 
 export type FactorKey = 'quality' | 'value' | 'momentum' | 'lowVol' | 'dividend' | 'size'
 
@@ -10,8 +10,9 @@ export type FactorKey = 'quality' | 'value' | 'momentum' | 'lowVol' | 'dividend'
  * - market: meinungsfreier Core (Markt-/Regionen-/Size-Baustein)
  * - factor: "Core mit Meinung" -> zählt gegen das 20 %-Faktor-Budget (Seite 11)
  * - cashflow: Dividenden-Strategie, laut Whitepaper (Ziel II, Seite 14) eher ein Satellit
+ * - satellite: gedeckelte Beimischung (z. B. Frontier/Entwicklungsländer, Einzelland-ETFs)
  */
-export type CoreRole = 'market' | 'factor' | 'cashflow'
+export type CoreRole = 'market' | 'factor' | 'cashflow' | 'satellite'
 
 export type ProfileConfidence = 'whitepaper' | 'estimated' | 'custom'
 
@@ -40,6 +41,8 @@ export interface CoreProfile {
   ter?: number
   asOf: string
   confidence: ProfileConfidence
+  /** Optionaler maximaler Anteil im Core (z. B. 0.03 für Frontier-Beimischung) */
+  maxCoreWeight?: number
   note?: string
 }
 
@@ -90,6 +93,7 @@ export interface CoreSparplanConfig {
   projectionHorizon?: number
   maxPositions?: number
   includeCandidates?: boolean
+  frontierCap?: number
 }
 
 export type { Investment }

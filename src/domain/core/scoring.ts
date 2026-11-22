@@ -1,7 +1,19 @@
 import { computeCoreExposure } from '../../utils/core/coreExposure'
-import { regionOf, REGION_LABELS } from '../../utils/core/countries'
-import { FACTOR_BUDGET_CAP } from '../../utils/core/targets'
-import type { CorePosition, CoreProfile, RegionKey, TargetStage } from '../../utils/core/types'
+import { isFrontierProfile, regionOf } from '../../utils/core/countries'
+import {
+  DEFAULT_FRONTIER_CAP,
+  FACTOR_BUDGET_CAP,
+  FRONTIER_MAX_BUDGET_SHARE,
+  REGION_TOLERANCE,
+} from '../../utils/core/targets'
+import type {
+  CoreExposure,
+  CorePosition,
+  CoreProfile,
+  RegionKey,
+  TargetGroup,
+  TargetStage,
+} from '../../utils/core/types'
 
 export interface SparplanItem {
   key: string
@@ -13,18 +25,28 @@ export interface SparplanItem {
   reason: string
   enabled: boolean
   isCandidate?: boolean
+  isSatellite?: boolean
 }
 
 export interface MonthlyStepAllocation {
   items: SparplanItem[]
   primaryFocusRegions: RegionKey[]
+  primaryFocusLabels: string[]
   targetsSmallCap: boolean
 }
 
 export function getProfileRegionShares(profile: CoreProfile): Record<RegionKey, number> {
-  const shares: Record<RegionKey, number> = { US: 0, CA: 0, EU: 0, JP: 0, PAC: 0, EM: 0 }
+  const shares: Record<RegionKey, number> = {
+    US: 0,
+    CA: 0,
+    EU: 0,
+    JP: 0,
+    PAC: 0,
+    EM: 0,
+    FM: 0,
+  }
   const countrySum =
-    Object.values(profile.countries).reduce((s, v) => s + (v > 0 ? v : 0), 0) || 100
+    Object.values(profile.countries).reduce((s, v) => s + Math.max(v, 0), 0) || 100
   for (const [cCode, rawVal] of Object.entries(profile.countries)) {
     if (rawVal <= 0) continue
     const rKey = regionOf(cCode)
@@ -33,110 +55,126 @@ export function getProfileRegionShares(profile: CoreProfile): Record<RegionKey, 
   return shares
 }
 
-export function scoreAndAllocateMonthlyStep(
-  pool: CorePosition[],
-  targetStage: TargetStage,
-  monthlyBudget: number,
-  maxPositions: number,
-  selectedKeys?: string[]
-): MonthlyStepAllocation {
-  if (pool.length === 0 || monthlyBudget <= 0) {
-    return { items: [], primaryFocusRegions: [], targetsSmallCap: false }
-  }
+interface ScoredCandidate {
+  pos: CorePosition
+  score: number
+  topGroup: TargetGroup | null
+  scShare: number
+  reason: string
+}
 
-  const currentExposure = computeCoreExposure(pool)
+interface GroupStatus {
+  group: TargetGroup
+  deficit: number
+  surplus: number
+}
 
-  const deficitsByRegion: Record<RegionKey, number> = { US: 0, CA: 0, EU: 0, JP: 0, PAC: 0, EM: 0 }
-  const surplusByRegion: Record<RegionKey, number> = { US: 0, CA: 0, EU: 0, JP: 0, PAC: 0, EM: 0 }
-
-  for (const group of targetStage.groups) {
-    const curVal = group.regions.reduce((s, r) => s + (currentExposure.regions[r] || 0), 0)
-    const diff = group.target - curVal
-    if (diff > 0) {
-      for (const r of group.regions) deficitsByRegion[r] = diff
-    } else {
-      for (const r of group.regions) surplusByRegion[r] = Math.abs(diff)
-    }
-  }
-
+function scoreCandidatesAgainstGroups(
+  positions: CorePosition[],
+  groupStatuses: GroupStatus[],
+  marketCoveredGroupIds: Set<string>,
+  hasMarketSmallCap: boolean,
+  currentExposure: CoreExposure,
+  targetStage: TargetStage
+): ScoredCandidate[] {
   const smallCapTarget = targetStage.id === 'stage3' ? 0.14 : 0
   const smallCapDeficit = Math.max(0, smallCapTarget - currentExposure.size.small)
 
-  const scored = pool.map((pos) => {
+  return positions.map((pos) => {
     const prof = pos.profile!
     const rShares = getProfileRegionShares(prof)
     let score = 0
     const reasons: string[] = []
-    let topRegionGain = 0
-    let topRegion: RegionKey | null = null
+    let topGroupGain = 0
+    let topGroup: TargetGroup | null = null
 
-    for (const rKey of ['US', 'CA', 'EU', 'JP', 'PAC', 'EM'] as RegionKey[]) {
-      const share = rShares[rKey]
-      if (share <= 0) continue
-      if (deficitsByRegion[rKey] > 0) {
-        const gain = share * deficitsByRegion[rKey] * 3.0
+    for (const status of groupStatuses) {
+      const groupShare = status.group.regions.reduce((s, r) => s + (rShares[r] || 0), 0)
+      if (groupShare <= 0) continue
+
+      if (status.deficit > 0) {
+        const gain = groupShare * status.deficit * 3.0
         score += gain
-        if (gain > topRegionGain) {
-          topRegionGain = gain
-          topRegion = rKey
+        if (gain > topGroupGain) {
+          topGroupGain = gain
+          topGroup = status.group
         }
       }
-      if (surplusByRegion[rKey] > 0.03) {
-        score -= share * surplusByRegion[rKey] * 1.6
+      if (status.surplus > REGION_TOLERANCE) {
+        score -= groupShare * status.surplus * 1.6
       }
     }
 
-    if (topRegion && topRegionGain > 0.03) {
-      reasons.push(`Stärkt ${REGION_LABELS[topRegion]}`)
+    if (topGroup && topGroupGain > 0.03) {
+      reasons.push(`Stärkt ${topGroup.label}`)
     }
 
     const scShare = (prof.size.small || 0) / 100
     if (smallCapDeficit > 0 && scShare > 0.2) {
       score += scShare * smallCapDeficit * 4.0
       reasons.push(`Small-Cap (${(scShare * 100).toFixed(0)} %)`)
+    } else if (
+      targetStage.id === 'stage2' &&
+      scShare >= 0.5 &&
+      currentExposure.size.small > 0.2
+    ) {
+      score -= 0.15
     }
 
     if (pos.role === 'factor' && currentExposure.roleShares.factor > FACTOR_BUDGET_CAP) {
-      const addressesKeyDeficit =
-        (smallCapDeficit > 0.02 && scShare >= 0.25) ||
-        (deficitsByRegion.EM > 0.03 && rShares.EM >= 0.4)
-      score -= addressesKeyDeficit ? 0.04 : 0.45
+      const topGroupDeficit =
+        groupStatuses.find((g) => g.group.id === topGroup?.id)?.deficit ?? 0
+      const fillsUncoveredGroup =
+        topGroup !== null &&
+        topGroupDeficit > REGION_TOLERANCE &&
+        !marketCoveredGroupIds.has(topGroup.id)
+      const fillsUncoveredSmallCap =
+        targetStage.id === 'stage3' &&
+        smallCapDeficit > 0.02 &&
+        scShare >= 0.25 &&
+        !hasMarketSmallCap
+
+      if (fillsUncoveredGroup || fillsUncoveredSmallCap) {
+        score -= 0.04
+        reasons.push('Faktor-ETF (kein Markt-Core im Bestand)')
+      } else {
+        score -= 0.45
+      }
     }
 
-    if (pos.role === 'cashflow') {
-      score -= 0.12
+    if (pos.role === 'cashflow' || pos.role === 'satellite') {
+      score -= 0.25
+    }
+
+    if (typeof prof.ter === 'number' && prof.ter > 0.5) {
+      score -= (prof.ter - 0.5) * 0.08
     }
 
     return {
       pos,
       score,
-      topRegion,
+      topGroup,
       scShare,
       reason: reasons.length > 0 ? reasons.join(' · ') : 'Unterstützt Zielgewichtung',
     }
   })
+}
 
-  let chosen = scored
-  if (selectedKeys && selectedKeys.length > 0) {
-    chosen = scored.filter((s) => selectedKeys.includes(s.pos.key))
-  } else {
-    const positive = scored.filter((s) => s.score > 0)
-    const candidates = positive.length > 0 ? positive : scored
-    chosen = [...candidates].sort((a, b) => b.score - a.score).slice(0, maxPositions)
-  }
-
-  if (chosen.length === 0) {
-    return { items: [], primaryFocusRegions: [], targetsSmallCap: false }
-  }
+function allocateProportionally(
+  chosen: ScoredCandidate[],
+  budget: number,
+  totalBudgetForShare: number
+): SparplanItem[] {
+  if (chosen.length === 0 || budget <= 0) return []
 
   const totalScore = chosen.reduce((s, sp) => s + Math.max(0.01, sp.score), 0)
-  const stepUnit = monthlyBudget >= chosen.length * 25 ? 25 : 5
-  let remainingBudget = monthlyBudget
+  const stepUnit = budget >= chosen.length * 25 ? 25 : 5
+  let remainingBudget = budget
   const items: SparplanItem[] = []
 
   chosen.forEach((sp, idx) => {
     const isLast = idx === chosen.length - 1
-    const rawShare = (Math.max(0.01, sp.score) / totalScore) * monthlyBudget
+    const rawShare = (Math.max(0.01, sp.score) / totalScore) * budget
     let rounded = Math.max(stepUnit, Math.round(rawShare / stepUnit) * stepUnit)
 
     if (isLast) {
@@ -154,7 +192,7 @@ export function scoreAndAllocateMonthlyStep(
         name: sp.pos.name,
         isin: sp.pos.profile!.isins[0] || '',
         amount: rounded,
-        shareOfBudget: monthlyBudget > 0 ? rounded / monthlyBudget : 0,
+        shareOfBudget: totalBudgetForShare > 0 ? rounded / totalBudgetForShare : 0,
         reason: sp.reason,
         enabled: true,
         isCandidate: sp.pos.isCandidate,
@@ -162,15 +200,216 @@ export function scoreAndAllocateMonthlyStep(
     }
   })
 
-  const focusSet = new Set<RegionKey>()
-  for (const c of chosen) {
-    if (c.topRegion) focusSet.add(c.topRegion)
+  return items
+}
+
+function computeFrontierAllocation(
+  pool: CorePosition[],
+  currentExposure: CoreExposure,
+  monthlyBudget: number,
+  maxPositions: number,
+  hasCorePool: boolean,
+  frontierCap: number
+): { candidate: CorePosition; amount: number } | null {
+  if (frontierCap <= 0) return null
+  if (maxPositions < 2 && hasCorePool) return null
+
+  const frontierCandidates = pool
+    .filter(
+      (pos) =>
+        pos.profile &&
+        !pos.isCandidate &&
+        pos.role === 'satellite' &&
+        isFrontierProfile(pos.profile)
+    )
+    .sort((a, b) => {
+      const fmDiff =
+        getProfileRegionShares(b.profile!).FM - getProfileRegionShares(a.profile!).FM
+      if (Math.abs(fmDiff) > 0.01) return fmDiff
+      return (a.profile!.ter ?? 1) - (b.profile!.ter ?? 1)
+    })
+
+  const candidate = frontierCandidates[0]
+  if (!candidate) return null
+
+  const fmActualShare = currentExposure.regions.FM || 0
+  if (fmActualShare >= frontierCap - 0.002) return null
+
+  const projectedTotal = currentExposure.total + monthlyBudget
+  const fmNeededEur = Math.max(
+    0,
+    projectedTotal * frontierCap - currentExposure.total * fmActualShare
+  )
+  const budgetShareLimit = hasCorePool
+    ? monthlyBudget * FRONTIER_MAX_BUDGET_SHARE
+    : monthlyBudget
+  const maxFrontierMonthly = Math.min(fmNeededEur, budgetShareLimit)
+  if (maxFrontierMonthly < 10) return null
+
+  const preferredUnit = monthlyBudget >= 100 ? 25 : 5
+  let amount = Math.floor(maxFrontierMonthly / preferredUnit) * preferredUnit
+  if (amount === 0) {
+    amount = Math.floor(maxFrontierMonthly / 5) * 5
   }
-  const targetsSmallCap = chosen.some((c) => c.scShare >= 0.25 && smallCapDeficit > 0.01)
+
+  if (hasCorePool) {
+    const minCoreReserve = monthlyBudget >= 50 ? 25 : 5
+    amount = Math.min(
+      amount,
+      Math.floor(budgetShareLimit),
+      Math.max(0, monthlyBudget - minCoreReserve)
+    )
+  }
+
+  if (amount <= 0) return null
+  return { candidate, amount }
+}
+
+export function scoreAndAllocateMonthlyStep(
+  pool: CorePosition[],
+  targetStage: TargetStage,
+  monthlyBudget: number,
+  maxPositions: number,
+  selectedKeys?: string[],
+  frontierCap = DEFAULT_FRONTIER_CAP
+): MonthlyStepAllocation {
+  if (pool.length === 0 || monthlyBudget <= 0) {
+    return {
+      items: [],
+      primaryFocusRegions: [],
+      primaryFocusLabels: [],
+      targetsSmallCap: false,
+    }
+  }
+
+  const currentExposure = computeCoreExposure(pool)
+
+  const groupStatuses: GroupStatus[] = targetStage.groups.map((group) => {
+    const curVal = group.regions.reduce((s, r) => s + (currentExposure.regions[r] || 0), 0)
+    const diff = group.target - curVal
+    return {
+      group,
+      deficit: diff > 0 ? diff : 0,
+      surplus: diff < 0 ? Math.abs(diff) : 0,
+    }
+  })
+
+  // Manuelle Auswahl durch den Anwender respektieren
+  if (selectedKeys && selectedKeys.length > 0) {
+    const manualPool = pool.filter((p) => p.profile && selectedKeys.includes(p.key))
+    const scoredManual = scoreCandidatesAgainstGroups(
+      manualPool,
+      groupStatuses,
+      new Set(),
+      false,
+      currentExposure,
+      targetStage
+    )
+    const items = allocateProportionally(scoredManual, monthlyBudget, monthlyBudget)
+    const focusRegions = new Set<RegionKey>()
+    const focusLabels = new Set<string>()
+    for (const c of scoredManual) {
+      if (c.topGroup) {
+        focusRegions.add(c.topGroup.regions[0])
+        focusLabels.add(c.topGroup.label)
+      }
+    }
+    const smallCapDeficit =
+      targetStage.id === 'stage3' ? Math.max(0, 0.14 - currentExposure.size.small) : 0
+    return {
+      items: items.sort((a, b) => b.amount - a.amount),
+      primaryFocusRegions: Array.from(focusRegions),
+      primaryFocusLabels: Array.from(focusLabels),
+      targetsSmallCap: scoredManual.some((c) => c.scShare >= 0.25 && smallCapDeficit > 0.01),
+    }
+  }
+
+  // Automatik: nur breite Markt-/Faktor-Core-ETFs (keine Frontier/Einzelland-Satelliten, keine Dividenden-Cashflow-Satelliten)
+  const corePool = pool.filter(
+    (pos) =>
+      pos.profile &&
+      (pos.role === 'market' || pos.role === 'factor') &&
+      !isFrontierProfile(pos.profile)
+  )
+
+  const frontierAlloc = computeFrontierAllocation(
+    pool,
+    currentExposure,
+    monthlyBudget,
+    maxPositions,
+    corePool.length > 0,
+    frontierCap
+  )
+  const frontierAmount = frontierAlloc?.amount ?? 0
+  const coreBudget = monthlyBudget - frontierAmount
+  const coreMaxSlots =
+    frontierAmount > 0 && corePool.length > 0 ? Math.max(1, maxPositions - 1) : maxPositions
+
+  const marketCoveredGroupIds = new Set<string>()
+  for (const status of groupStatuses) {
+    if (status.deficit <= REGION_TOLERANCE) continue
+    const coveredByMarket = corePool.some((pos) => {
+      if (pos.role !== 'market') return false
+      const rShares = getProfileRegionShares(pos.profile!)
+      const groupShare = status.group.regions.reduce((s, r) => s + (rShares[r] || 0), 0)
+      return groupShare >= 0.25
+    })
+    if (coveredByMarket) {
+      marketCoveredGroupIds.add(status.group.id)
+    }
+  }
+
+  const hasMarketSmallCap = corePool.some(
+    (pos) => pos.role === 'market' && (pos.profile!.size.small || 0) >= 30
+  )
+
+  const scoredCore = scoreCandidatesAgainstGroups(
+    corePool,
+    groupStatuses,
+    marketCoveredGroupIds,
+    hasMarketSmallCap,
+    currentExposure,
+    targetStage
+  )
+
+  const positive = scoredCore.filter((s) => s.score > 0)
+  const candidates = positive.length > 0 ? positive : scoredCore
+  const chosenCore = [...candidates].sort((a, b) => b.score - a.score).slice(0, coreMaxSlots)
+
+  const items = allocateProportionally(chosenCore, coreBudget, monthlyBudget)
+
+  if (frontierAlloc && frontierAmount > 0) {
+    items.push({
+      key: frontierAlloc.candidate.key,
+      profileId: frontierAlloc.candidate.profile!.id,
+      name: frontierAlloc.candidate.name,
+      isin: frontierAlloc.candidate.profile!.isins[0] || '',
+      amount: frontierAmount,
+      shareOfBudget: monthlyBudget > 0 ? frontierAmount / monthlyBudget : 0,
+      reason: `Frontier-Beimischung (Cap ${(frontierCap * 100).toFixed(0)} %)`,
+      enabled: true,
+      isSatellite: true,
+    })
+  }
+
+  const focusRegions = new Set<RegionKey>()
+  const focusLabels = new Set<string>()
+  for (const c of chosenCore) {
+    if (c.topGroup) {
+      focusRegions.add(c.topGroup.regions[0])
+      focusLabels.add(c.topGroup.label)
+    }
+  }
+  const smallCapDeficit =
+    targetStage.id === 'stage3' ? Math.max(0, 0.14 - currentExposure.size.small) : 0
+  const targetsSmallCap = chosenCore.some(
+    (c) => c.scShare >= 0.25 && smallCapDeficit > 0.01
+  )
 
   return {
     items: items.sort((a, b) => b.amount - a.amount),
-    primaryFocusRegions: Array.from(focusSet),
+    primaryFocusRegions: Array.from(focusRegions),
+    primaryFocusLabels: Array.from(focusLabels),
     targetsSmallCap,
   }
 }

@@ -1,6 +1,7 @@
 import { BUILTIN_PROFILES } from '../../utils/core/builtinProfiles'
+import { isFrontierProfile, isSingleCountryTilt } from '../../utils/core/countries'
 import { getAllProfiles } from '../../utils/core/profileStore'
-import { FACTOR_BUDGET_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
+import { DEFAULT_FRONTIER_CAP, FACTOR_BUDGET_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
 import type { CoreExposure, CorePosition, CoreProfile, RegionKey, TargetStage } from '../../utils/core/types'
 import { getProfileRegionShares } from './scoring'
 
@@ -21,7 +22,8 @@ export function diagnoseCoreGaps(
   positions: CorePosition[],
   exposure: CoreExposure,
   targetStage: TargetStage,
-  targetExposure: CoreExposure
+  targetExposure: CoreExposure,
+  frontierCap = DEFAULT_FRONTIER_CAP
 ): CoreGapDiagnostic[] {
   const diagnostics: CoreGapDiagnostic[] = []
   const allProfiles = getAllProfiles()
@@ -55,8 +57,28 @@ export function diagnoseCoreGaps(
   }
 
   const coveredPositions = positions.filter((p) => p.profile !== null && p.value > 0)
+  const eligibleCorePositions = coveredPositions.filter(
+    (pos) =>
+      (pos.role === 'market' || pos.role === 'factor') &&
+      !isFrontierProfile(pos.profile!) &&
+      !isSingleCountryTilt(pos.profile!)
+  )
 
-  // 3. Fehlender regionaler Zugang über bestehende ETFs
+  // 2b. Frontier-Beimischung über Cap
+  const frontierShare = exposure.regions.FM || 0
+  if (frontierCap > 0 && frontierShare > frontierCap + 0.005) {
+    const pct = (frontierShare * 100).toFixed(1)
+    const capPct = (frontierCap * 100).toFixed(0)
+    diagnostics.push({
+      id: 'frontier-over-cap',
+      severity: 'warning',
+      title: `Frontier-Anteil bei ${pct} % (über ${capPct} %-Cap)`,
+      detail:
+        'Entwicklungsländer werden getrennt von Schwellenländern geführt. Weitere Frontier-Zukäufe sind im Fahrplan pausiert.',
+    })
+  }
+
+  // 3. Fehlender regionaler Zugang über breite Kern-ETFs
   const missingRegionGroups: Array<{
     label: string
     deficit: number
@@ -69,7 +91,7 @@ export function diagnoseCoreGaps(
     const deficit = group.target - curShare
     if (deficit <= REGION_TOLERANCE) continue
 
-    const hasAccess = coveredPositions.some((pos) => {
+    const hasAccess = eligibleCorePositions.some((pos) => {
       const rShares = getProfileRegionShares(pos.profile!)
       const groupShare = group.regions.reduce((s, r) => s + (rShares[r] || 0), 0)
       return groupShare >= 0.2
@@ -137,5 +159,5 @@ export function diagnoseCoreGaps(
     }
   }
 
-  return diagnostics.slice(0, 3)
+  return diagnostics.slice(0, 4)
 }

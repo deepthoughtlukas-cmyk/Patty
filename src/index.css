@@ -3319,6 +3319,15 @@ tr.dimmed-row:hover {
   color: var(--blue);
 }
 
+.core-satellite-badge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(232, 121, 249, 0.16);
+  color: #e879f9;
+}
+
 .core-drawer {
   background: var(--bg-card);
   border: 1px solid var(--border);

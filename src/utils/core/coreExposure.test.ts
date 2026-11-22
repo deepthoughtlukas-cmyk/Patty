@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Investment } from '../parser'
 import { BUILTIN_PROFILES } from './builtinProfiles'
+import { isFrontierProfile, isSingleCountryTilt } from './countries'
 import {
   extractCoreInvestments,
   findProfileForInvestment,
@@ -181,5 +182,59 @@ describe('coreExposure logic', () => {
     expect(actualFit.largestUnderweight!.eurDiff).toBeGreaterThan(0)
     const emGap = actualFit.regionGaps.find((g) => g.id === 'em')
     expect(emGap?.eurDiff).toBeGreaterThan(0)
+  })
+
+  it('separates Frontier Markets (FM) from EM and flags non-core single-country tilts only in multi-country buckets', () => {
+    const frontierInv: Investment = {
+      name: 'XTRACKERS S&P SELECT FRONTIER SWAP ETF',
+      isin: 'LU0328476410',
+      wkn: 'DBX1A9',
+      type: 'ETF',
+      quantity: 20,
+      purchasePrice: 15,
+      currentPrice: 20,
+      currentValue: 400,
+      currency: 'EUR',
+      exchangeRate: 1,
+      region: 'Global',
+      sector: 'Broad',
+      category: 'Stocks',
+      subcategory: 'Core',
+    }
+    const indiaInv: Investment = {
+      name: 'ISHARES MSCI INDIA ETF',
+      isin: 'IE00BZCQB185',
+      wkn: 'A2AFCY',
+      type: 'ETF',
+      quantity: 10,
+      purchasePrice: 50,
+      currentPrice: 50,
+      currentValue: 500,
+      currency: 'EUR',
+      exchangeRate: 1,
+      region: 'Indien',
+      sector: 'Broad',
+      category: 'Stocks',
+      subcategory: 'Core',
+    }
+
+    const frontierProf = findProfileForInvestment(frontierInv, BUILTIN_PROFILES)!
+    const indiaProf = findProfileForInvestment(indiaInv, BUILTIN_PROFILES)!
+    const canadaProf = BUILTIN_PROFILES.find((p) => p.id === 'wp-ubs-msci-canada')!
+    const japanProf = BUILTIN_PROFILES.find((p) => p.id === 'wp-amundi-msci-japan')!
+
+    expect(frontierProf.role).toBe('satellite')
+    expect(isFrontierProfile(frontierProf)).toBe(true)
+    expect(indiaProf.role).toBe('satellite')
+    expect(isSingleCountryTilt(indiaProf)).toBe(true)
+    // Canada & Japan are dedicated core region buckets -> allowed
+    expect(isSingleCountryTilt(canadaProf)).toBe(false)
+    expect(isSingleCountryTilt(japanProf)).toBe(false)
+
+    const fmPos = buildCorePositions([frontierInv], BUILTIN_PROFILES)
+    const exp = computeCoreExposure(fmPos)
+    expect(exp.regions.FM).toBeCloseTo(1, 4)
+    expect(exp.regions.EM).toBe(0)
+    expect(exp.roleShares.satellite).toBeCloseTo(1, 4)
   })
 })

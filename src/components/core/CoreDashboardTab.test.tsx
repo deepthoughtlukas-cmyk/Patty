@@ -151,4 +151,40 @@ describe('CoreDashboardTab 3-Level Cockpit', () => {
     const holdingsDrawer = holdingsDrawerBtn.closest('.core-drawer') as HTMLElement
     expect(within(holdingsDrawer).getByText('ISHARES MSCI INDIA ETF')).toBeInTheDocument()
   })
+
+  it('displays separate Frontier / Entwicklungsländer row, Frontier-Cap controls (3% default), and Beimischung role', async () => {
+    const user = userEvent.setup()
+    const withFrontier: Investment[] = [
+      ...coreInvestments,
+      {
+        name: 'XTRACKERS S&P SELECT FRONTIER SWAP ETF',
+        isin: 'LU0328476410',
+        wkn: 'DBX1A9',
+        type: 'ETF',
+        quantity: 10,
+        purchasePrice: 18,
+        currentPrice: 20,
+        currentValue: 200,
+        currency: 'EUR',
+        exchangeRate: 1,
+        region: 'Global',
+        sector: 'Broad',
+        category: 'Stocks',
+        subcategory: 'Core',
+      },
+    ]
+
+    render(<CoreDashboardTab investments={withFrontier} suggestedCoreBuy={350} />)
+
+    expect(screen.getByText('Frontier / Entwicklungsländer')).toBeInTheDocument()
+    const capGroup = screen.getByLabelText('Frontier-Cap')
+    expect(within(capGroup).getByRole('button', { name: '3 %' })).toHaveClass('active')
+
+    await user.click(within(capGroup).getByRole('button', { name: '5 %' }))
+    expect(within(capGroup).getByRole('button', { name: '5 %' })).toHaveClass('active')
+
+    const holdingsDrawerBtn = screen.getByRole('button', { name: /Core-ETFs & Profil-Zuordnung/i })
+    await user.click(holdingsDrawerBtn)
+    expect(screen.getAllByText('Beimischung / Satellit').length).toBeGreaterThan(0)
+  })
 })

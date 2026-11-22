@@ -16,7 +16,8 @@ import {
   loadCoreSparplanConfig,
   saveCoreSparplanConfig,
 } from '../../utils/core/profileStore'
-import { getStage } from '../../utils/core/targets'
+import { DEFAULT_FRONTIER_CAP, getStage } from '../../utils/core/targets'
+import { isFrontierProfile } from '../../utils/core/countries'
 import { buildPhasedRoadmap, diagnoseCoreGaps } from '../../utils/core/coreOptimizer'
 import { CoreKpiHeader } from './CoreKpiHeader'
 import { CoreSimulator } from './CoreSimulator'
@@ -108,6 +109,14 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
   const [includeCandidates, setIncludeCandidates] = useState<boolean>(
     () => Boolean(savedConfig?.includeCandidates)
   )
+  const [frontierCap, setFrontierCap] = useState<number>(
+    () => typeof savedConfig?.frontierCap === 'number' ? savedConfig.frontierCap : DEFAULT_FRONTIER_CAP
+  )
+
+  const hasFrontierPosition = useMemo(
+    () => positions.some((p) => p.profile !== null && isFrontierProfile(p.profile)),
+    [positions]
+  )
 
   useEffect(() => {
     saveCoreSparplanConfig({
@@ -115,8 +124,9 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
       maxPositions,
       projectionHorizon,
       includeCandidates,
+      frontierCap,
     })
-  }, [monthlyBudget, maxPositions, projectionHorizon, includeCandidates])
+  }, [monthlyBudget, maxPositions, projectionHorizon, includeCandidates, frontierCap])
 
   const roadmap = useMemo(
     () =>
@@ -124,13 +134,14 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
         maxPositions,
         maxMonths: projectionHorizon,
         includeModelCandidates: includeCandidates,
+        frontierCap,
       }),
-    [positions, activeStage, monthlyBudget, maxPositions, projectionHorizon, includeCandidates]
+    [positions, activeStage, monthlyBudget, maxPositions, projectionHorizon, includeCandidates, frontierCap]
   )
 
   const diagnostics = useMemo(
-    () => diagnoseCoreGaps(positions, baseExposure, activeStage, targetExposure),
-    [positions, baseExposure, activeStage, targetExposure]
+    () => diagnoseCoreGaps(positions, baseExposure, activeStage, targetExposure, frontierCap),
+    [positions, baseExposure, activeStage, targetExposure, frontierCap]
   )
 
   // Szenario-Vorschau (Heute | Nach 12 M | Ziel | Simulation)
@@ -150,8 +161,8 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
   }, [scenarioMode, simulatedExposure, roadmap.exposureAfter12m, targetExposure, baseExposure])
 
   const fitSummary = useMemo(
-    () => computeCoreFitSummary(displayExposure, activeStage, targetExposure),
-    [displayExposure, activeStage, targetExposure]
+    () => computeCoreFitSummary(displayExposure, activeStage, targetExposure, frontierCap),
+    [displayExposure, activeStage, targetExposure, frontierCap]
   )
 
   // Experten-Drawer State
@@ -220,6 +231,7 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
         onSelectScenario={handleSelectScenario}
         hasPlan12m={monthlyBudget > 0}
         isSimulated={isSimulated}
+        frontierCap={frontierCap}
       />
 
       {/* Ebene 3: Geführter Fahrplan */}
@@ -237,6 +249,9 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
         onMaxPositionsChange={setMaxPositions}
         projectionHorizon={projectionHorizon}
         onProjectionHorizonChange={setProjectionHorizon}
+        hasFrontierPosition={hasFrontierPosition}
+        frontierCap={frontierCap}
+        onFrontierCapChange={setFrontierCap}
         roadmap={roadmap}
         diagnostics={diagnostics}
         onApplyToSimulator={handleApplyToSimulator}

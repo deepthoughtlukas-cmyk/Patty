@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, Check } from 'lucide-react'
 import type { CoreExposure, RegionKey, TargetStage } from '../../utils/core/types'
 import { ALL_FACTORS, ALL_REGIONS, countryName, FACTOR_LABELS, REGION_LABELS, regionOf } from '../../utils/core/countries'
-import { FACTOR_BUDGET_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
+import { DEFAULT_FRONTIER_CAP, FACTOR_BUDGET_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
 import { fmtEurSigned } from '../../shared/lib/format'
 
 export type ScenarioViewMode = 'now' | 'plan12m' | 'target' | 'sim'
@@ -16,6 +16,7 @@ interface CoreExposureChartsProps {
   onSelectScenario: (mode: 'now' | 'plan12m' | 'target') => void
   hasPlan12m: boolean
   isSimulated: boolean
+  frontierCap?: number
 }
 
 const REGION_COLORS: Record<string, string> = {
@@ -25,6 +26,7 @@ const REGION_COLORS: Record<string, string> = {
   JP: '#f472b6',
   PAC: '#a78bfa',
   EM: '#fb923c',
+  FM: '#e879f9',
 }
 
 const CURRENCY_COLORS: Record<string, string> = {
@@ -57,6 +59,7 @@ export const CoreExposureCharts: React.FC<CoreExposureChartsProps> = ({
   onSelectScenario,
   hasPlan12m,
   isSimulated,
+  frontierCap = DEFAULT_FRONTIER_CAP,
 }) => {
   const [activeDimTab, setActiveDimTab] = useState<'regions-cap' | 'countries' | 'currencies-factors'>('regions-cap')
   const [countryGroupMode, setCountryGroupMode] = useState<'top' | 'by-region'>('top')
@@ -296,6 +299,74 @@ export const CoreExposureCharts: React.FC<CoreExposureChartsProps> = ({
                   </div>
                 )
               })}
+
+              {(exposure.regions.FM || 0) > 0.001 && (() => {
+                const fmActual = exposure.regions.FM || 0
+                const fmActualPct = fmActual * 100
+                const fmCapPct = frontierCap * 100
+                const fmDiffPct = fmActualPct - fmCapPct
+                const fmOverCap = frontierCap > 0 && fmActual > frontierCap + 0.005
+                return (
+                  <div
+                    key="fm-satellite"
+                    style={{
+                      borderTop: '1px dashed var(--border)',
+                      paddingTop: '10px',
+                      marginTop: '4px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem', marginBottom: 4, gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          Frontier / Entwicklungsländer
+                        </span>
+                        <span className="core-satellite-badge">Beimischung</span>
+                        {frontierCap === 0 ? (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Pausiert</span>
+                        ) : fmOverCap ? (
+                          <span style={{ color: 'var(--gold)', display: 'inline-flex', alignItems: 'center', fontSize: '0.72rem' }}>
+                            <ArrowUpRight size={11} style={{ marginRight: 2 }} /> +{fmDiffPct.toFixed(1)} % über Cap
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--green)', display: 'inline-flex', alignItems: 'center', fontSize: '0.72rem' }}>
+                            <Check size={11} style={{ marginRight: 2 }} /> im Cap
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontVariantNumeric: 'tabular-nums' }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+                          {fmActualPct.toFixed(1)} %
+                        </span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                          / {frontierCap > 0 ? `Cap ${fmCapPct.toFixed(0)} %` : 'Aus'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="core-bar-track">
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, fmActualPct)}%`,
+                          background: REGION_COLORS.FM,
+                          borderRadius: '7px',
+                          transition: 'width 0.3s ease',
+                          position: 'relative',
+                          zIndex: 1,
+                        }}
+                      />
+                      {frontierCap > 0 && (
+                        <div
+                          className="core-target-line"
+                          style={{ left: `${Math.min(100, fmCapPct)}%` }}
+                          title={`Max. Cap: ${fmCapPct.toFixed(0)} %`}
+                        />
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
 
@@ -536,18 +607,20 @@ export const CoreExposureCharts: React.FC<CoreExposureChartsProps> = ({
 
             {/* Rollen-Verteilung mit 20 %-Cap */}
             <div style={{ marginBottom: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 10px', fontSize: '0.76rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
                 <span>Markt-Core {(exposure.roleShares.market * 100).toFixed(0)} %</span>
                 <span style={{ color: exposure.roleShares.factor > FACTOR_BUDGET_CAP ? 'var(--red)' : 'var(--green)' }}>
                   Faktor {(exposure.roleShares.factor * 100).toFixed(0)} % (Cap 20 %)
                 </span>
-                <span>Satellit {(exposure.roleShares.cashflow * 100).toFixed(0)} %</span>
+                <span>Dividende {(exposure.roleShares.cashflow * 100).toFixed(0)} %</span>
+                <span style={{ color: '#e879f9' }}>Beimischung {(exposure.roleShares.satellite * 100).toFixed(0)} %</span>
               </div>
               <div className="core-bar-track" style={{ height: '10px' }}>
                 <div style={{ display: 'flex', height: '100%', width: '100%' }}>
                   <span style={{ width: `${exposure.roleShares.market * 100}%`, background: '#60a5fa' }} />
                   <span style={{ width: `${exposure.roleShares.factor * 100}%`, background: '#f0c040' }} />
                   <span style={{ width: `${exposure.roleShares.cashflow * 100}%`, background: '#a78bfa' }} />
+                  <span style={{ width: `${exposure.roleShares.satellite * 100}%`, background: '#e879f9' }} />
                 </div>
               </div>
             </div>

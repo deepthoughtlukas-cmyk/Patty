@@ -52,11 +52,18 @@ export function validateProfiles(raw: unknown): CoreProfile[] {
       countries: p.countries as Record<string, number>,
       size: { large: Number(size.large) || 0, mid: Number(size.mid) || 0, small: Number(size.small) || 0 },
       factors: p.factors && typeof p.factors === 'object' ? p.factors : {},
-      role: p.role === 'factor' || p.role === 'cashflow' ? p.role : 'market',
+      role:
+        p.role === 'factor' || p.role === 'cashflow' || p.role === 'satellite'
+          ? p.role
+          : 'market',
       hedgedToEur: !!p.hedgedToEur,
       ter: typeof p.ter === 'number' ? p.ter : undefined,
       asOf: typeof p.asOf === 'string' ? p.asOf : '',
       confidence: CONFIDENCES.includes(p.confidence as ProfileConfidence) ? (p.confidence as ProfileConfidence) : 'custom',
+      maxCoreWeight:
+        typeof p.maxCoreWeight === 'number' && p.maxCoreWeight > 0 && p.maxCoreWeight <= 1
+          ? p.maxCoreWeight
+          : undefined,
       note: typeof p.note === 'string' ? p.note : undefined,
     })
   }

@@ -2,7 +2,7 @@ import { BUILTIN_PROFILES } from '../../utils/core/builtinProfiles'
 import { computeCoreExposure } from '../../utils/core/coreExposure'
 import { REGION_LABELS } from '../../utils/core/countries'
 import { getAllProfiles } from '../../utils/core/profileStore'
-import { REGION_TOLERANCE } from '../../utils/core/targets'
+import { DEFAULT_FRONTIER_CAP, REGION_TOLERANCE } from '../../utils/core/targets'
 import type { CoreExposure, CorePosition, RegionKey, TargetStage } from '../../utils/core/types'
 import { scoreAndAllocateMonthlyStep, type SparplanItem } from './scoring'
 
@@ -14,6 +14,7 @@ export interface ProjectionPoint {
   usShare: number
   euShare: number
   emShare: number
+  fmShare: number
   jpShare: number
   pacShare: number
   caShare: number
@@ -64,16 +65,19 @@ export function optimizeExistingCoreSparplan(
   options?: {
     maxPositions?: number
     selectedKeys?: string[]
+    frontierCap?: number
   }
 ): SparplanItem[] {
   const maxPos = options?.maxPositions ?? 4
+  const frontierCap = options?.frontierCap ?? DEFAULT_FRONTIER_CAP
   const activePositions = positions.filter((p) => p.profile !== null && p.value > 0)
   return scoreAndAllocateMonthlyStep(
     activePositions,
     targetStage,
     monthlyBudget,
     maxPos,
-    options?.selectedKeys
+    options?.selectedKeys,
+    frontierCap
   ).items
 }
 
@@ -151,6 +155,7 @@ export function projectSparplanTimeline(
         usShare: exp.regions.US || 0,
         euShare: exp.regions.EU || 0,
         emShare: exp.regions.EM || 0,
+        fmShare: exp.regions.FM || 0,
         jpShare: exp.regions.JP || 0,
         pacShare: exp.regions.PAC || 0,
         caShare: exp.regions.CA || 0,
@@ -190,11 +195,18 @@ function buildPhaseTitleAndFocus(
   phaseNumber: number,
   items: SparplanItem[],
   focusRegions: RegionKey[],
+  focusLabels: string[],
   targetsSmallCap: boolean
 ): { title: string; focusSummary: string } {
   const parts: string[] = []
-  for (const r of focusRegions.slice(0, 2)) {
-    parts.push(REGION_LABELS[r])
+  if (focusLabels.length > 0) {
+    for (const lbl of focusLabels.slice(0, 2)) {
+      parts.push(lbl)
+    }
+  } else {
+    for (const r of focusRegions.slice(0, 2)) {
+      if (r !== 'FM') parts.push(REGION_LABELS[r])
+    }
   }
   if (targetsSmallCap) parts.push('Small Caps')
 
@@ -226,12 +238,14 @@ export function buildPhasedRoadmap(
     maxMonths?: number
     includeModelCandidates?: boolean
     selectedKeys?: string[]
+    frontierCap?: number
   }
 ): CoreRoadmap {
   const maxMonths = options?.maxMonths ?? 36
   const maxPositions = Math.max(1, Math.min(4, options?.maxPositions ?? 4))
   const includeCandidates = Boolean(options?.includeModelCandidates)
   const selectedFilter = !includeCandidates ? options?.selectedKeys : undefined
+  const frontierCap = options?.frontierCap ?? DEFAULT_FRONTIER_CAP
 
   const activeExisting = positions.filter((p) => p.profile !== null && p.value > 0)
   const pool: CorePosition[] = [...activeExisting]
@@ -282,6 +296,7 @@ export function buildPhasedRoadmap(
       usShare: exp.regions.US || 0,
       euShare: exp.regions.EU || 0,
       emShare: exp.regions.EM || 0,
+      fmShare: exp.regions.FM || 0,
       jpShare: exp.regions.JP || 0,
       pacShare: exp.regions.PAC || 0,
       caShare: exp.regions.CA || 0,
@@ -303,6 +318,7 @@ export function buildPhasedRoadmap(
     month: number
     items: SparplanItem[]
     focusRegions: RegionKey[]
+    focusLabels: string[]
     targetsSmallCap: boolean
     milestoneReached?: string
   }
@@ -312,12 +328,21 @@ export function buildPhasedRoadmap(
     targetStage,
     monthlyBudget,
     maxPositions,
-    selectedFilter
+    selectedFilter,
+    frontierCap
   )
+
+  let prevExposure = baseExposure
 
   for (let m = 1; m <= maxMonths; m++) {
     const monthIdx = m - 1
-    if (monthIdx > 0 && monthIdx % 3 === 0) {
+    const hasSatelliteActive = currentStepAlloc.items.some((i) => i.isSatellite)
+    const frontierReachedCap =
+      hasSatelliteActive &&
+      frontierCap > 0 &&
+      (prevExposure.regions.FM || 0) >= frontierCap - 0.002
+
+    if ((monthIdx > 0 && monthIdx % 3 === 0) || frontierReachedCap) {
       const virtualPool = pool.map((p) => ({
         ...p,
         value: p.value + (cumulativeDeltas[p.key] || 0),
@@ -327,7 +352,8 @@ export function buildPhasedRoadmap(
         targetStage,
         monthlyBudget,
         maxPositions,
-        selectedFilter
+        selectedFilter,
+        frontierCap
       )
     }
 
@@ -336,6 +362,7 @@ export function buildPhasedRoadmap(
     }
 
     const exp = computeCoreExposure(pool, cumulativeDeltas)
+    prevExposure = exp
     const status = checkTargets(exp)
     const milestonesNow: string[] = []
 
@@ -362,6 +389,7 @@ export function buildPhasedRoadmap(
         month: m,
         items: currentStepAlloc.items,
         focusRegions: currentStepAlloc.primaryFocusRegions,
+        focusLabels: currentStepAlloc.primaryFocusLabels,
         targetsSmallCap: currentStepAlloc.targetsSmallCap,
         milestoneReached: milestonesNow[0],
       })
@@ -398,6 +426,7 @@ export function buildPhasedRoadmap(
         phaseNumber,
         step.items,
         step.focusRegions,
+        step.focusLabels,
         step.targetsSmallCap
       )
       groupedPhases.push({
@@ -413,13 +442,18 @@ export function buildPhasedRoadmap(
   }
 
   while (groupedPhases.length > 3) {
-    const last = groupedPhases.pop()!
-    const prev = groupedPhases[groupedPhases.length - 1]
-    prev.endMonth = last.endMonth
-    if (last.milestoneReached) {
-      prev.milestoneReached = last.milestoneReached
+    // Keep Phase 1 (immediate plan) and the final phase (settled allocation after caps/milestones),
+    // merging intermediate transition steps into the middle phase.
+    const removed = groupedPhases.splice(2, 1)[0]
+    const middle = groupedPhases[1]
+    middle.endMonth = removed.endMonth
+    if (removed.milestoneReached && !middle.milestoneReached) {
+      middle.milestoneReached = removed.milestoneReached
     }
   }
+  groupedPhases.forEach((p, idx) => {
+    p.phaseNumber = idx + 1
+  })
 
   return {
     phases: groupedPhases,
