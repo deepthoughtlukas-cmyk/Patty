@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import Dashboard from './Dashboard'
 
@@ -192,5 +192,306 @@ describe('Dashboard Interactive UI Tests', () => {
     })
   })
 })
+
+describe('Dashboard Metal Prices Live Fetch', () => {
+  const metalInvestments = [
+    {
+      name: 'Gold',
+      isin: 'XC0009655157',
+      wkn: 'N/A',
+      type: 'Edelmetalle',
+      category: 'Safe-Haven Gold' as const,
+      subcategory: 'Münzen',
+      currentValue: 4000,
+      currentPrice: 2000,
+      quantity: 2,
+      purchasePrice: 1800,
+      sector: 'Gold',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+    {
+      name: 'Silber',
+      isin: 'XC0009653103',
+      wkn: 'N/A',
+      type: 'Edelmetalle',
+      category: 'Performance Gold' as const,
+      subcategory: 'Silber',
+      currentValue: 300,
+      currentPrice: 30,
+      quantity: 10,
+      purchasePrice: 25,
+      sector: 'Edelmetalle & Mineralien',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+  ]
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it('loads Gold and Silver EUR prices on button click, updates localStorage and recalculates portfolio values', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://api.gold-api.com/price/XAU/EUR') {
+        return new Response(JSON.stringify({ price: 3225.09, updatedAt: '2026-11-22T14:00:10Z' }), { status: 200 })
+      }
+      if (url === 'https://api.gold-api.com/price/XAG/EUR') {
+        return new Response(JSON.stringify({ price: 37.44, updatedAt: '2026-11-22T14:00:09Z' }), { status: 200 })
+      }
+      throw new Error(`Unexpected URL: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Dashboard investments={metalInvestments} onCategoryChange={vi.fn()} />)
+
+    // Initial portfolio total = 4000 + 300 = 4.300,00
+    expect(screen.getByText(/4\.300,00/)).toBeInTheDocument()
+
+    const fetchBtn = screen.getByRole('button', { name: /Gold & Silber laden/i })
+    await user.click(fetchBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText(/3\.225,09/)).toBeInTheDocument()
+      expect(screen.getByText(/37,44/)).toBeInTheDocument()
+    })
+
+    expect(localStorage.getItem('patty-manual-gold')).toBe('3225.09')
+    expect(localStorage.getItem('patty-manual-silver')).toBe('37.44')
+
+    // Recalculated portfolio value: 2 * 3225.09 + 10 * 37.44 = 6450.18 + 374.40 = 6.824,58
+    await waitFor(() => {
+      expect(screen.getByText(/6\.824,58/)).toBeInTheDocument()
+    })
+  })
+
+  it('shows an error alert and preserves existing prices when all providers fail', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('patty-manual-gold', '2900')
+    localStorage.setItem('patty-manual-silver', '32')
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'down' }), { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Dashboard investments={metalInvestments} onCategoryChange={vi.fn()} />)
+
+    const fetchBtn = screen.getByRole('button', { name: /Gold & Silber laden/i })
+    await user.click(fetchBtn)
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/Edelmetallpreise konnten nicht geladen werden/i)
+    })
+
+    expect(localStorage.getItem('patty-manual-gold')).toBe('2900')
+    expect(localStorage.getItem('patty-manual-silver')).toBe('32')
+    expect(screen.getByText(/2\.900,00/)).toBeInTheDocument()
+    expect(screen.getByText(/32,00/)).toBeInTheDocument()
+  })
+
+  it('resets prices and restores original CSV portfolio values when clicking reset', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('patty-manual-gold', '3225.09')
+    localStorage.setItem('patty-manual-silver', '37.44')
+
+    render(<Dashboard investments={metalInvestments} onCategoryChange={vi.fn()} />)
+
+    // Overridden portfolio value is shown initially: 6.824,58
+    await waitFor(() => {
+      expect(screen.getByText(/6\.824,58/)).toBeInTheDocument()
+    })
+
+    const resetBtn = screen.getByRole('button', { name: /Edelmetallpreise zurücksetzen/i })
+    await user.click(resetBtn)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('patty-manual-gold')).toBe('0')
+      expect(localStorage.getItem('patty-manual-silver')).toBe('0')
+      expect(screen.getByText(/4\.300,00/)).toBeInTheDocument()
+    })
+  })
+})
+
+describe('Dashboard Precious Metal Ounces & Depository Summary', () => {
+  const portfolioWithMetals = [
+    {
+      name: 'Gold',
+      isin: 'XC0009655157',
+      wkn: 'N/A',
+      type: 'Edelmetalle',
+      category: 'Safe-Haven Gold' as const,
+      subcategory: 'Münzen',
+      currentValue: 6450.28,
+      currentPrice: 3904.8,
+      quantity: 1.652,
+      purchasePrice: 2504.26,
+      sector: 'Gold',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+    {
+      name: 'DT.BOERSE COM. XETRA-GOLD',
+      isin: 'DE000A0S9GB0',
+      wkn: 'A0S9GB',
+      type: 'Edelmetalle',
+      category: 'Safe-Haven Gold' as const,
+      subcategory: 'ETF',
+      currentValue: 3525.14,
+      currentPrice: 125.9,
+      quantity: 28,
+      purchasePrice: 75.84,
+      sector: 'Gold',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+    {
+      name: 'Silber',
+      isin: 'XC0009653103',
+      wkn: 'N/A',
+      type: 'Edelmetalle',
+      category: 'Performance Gold' as const,
+      subcategory: 'Silber',
+      currentValue: 587.63,
+      currentPrice: 65.29,
+      quantity: 9,
+      purchasePrice: 54.32,
+      sector: 'Edelmetalle & Mineralien',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+    {
+      name: 'XTRACK. ETC SILBER 80',
+      isin: 'DE000A2T0VS9',
+      wkn: 'A2T0VS',
+      type: 'Edelmetalle',
+      category: 'Performance Gold' as const,
+      subcategory: 'Silber',
+      currentValue: 1317.19,
+      currentPrice: 94.09,
+      quantity: 14,
+      purchasePrice: 89.77,
+      sector: 'Roh-, Hilfs- & Betriebsstoffe',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+    {
+      name: 'Core MSCI World',
+      isin: 'IE00B4L5Y983',
+      wkn: 'A0RPWH',
+      type: 'ETF',
+      category: 'Stocks' as const,
+      subcategory: 'Core',
+      currentValue: 10000,
+      currentPrice: 100,
+      quantity: 100,
+      purchasePrice: 80,
+      sector: 'Broad',
+      region: 'Global',
+      currency: 'EUR',
+      exchangeRate: 1,
+    },
+  ]
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+    localStorage.setItem(
+      'patty-depository-list',
+      JSON.stringify(['Kleiderschrank', 'Flatex', 'Gold Avenue'])
+    )
+    localStorage.setItem(
+      'patty-depositories',
+      JSON.stringify({
+        XC0009655157: 'Kleiderschrank',
+        XC0009653103: 'Kleiderschrank',
+        DE000A0S9GB0: 'Flatex',
+        DE000A2T0VS9: 'Flatex',
+      })
+    )
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('displays ounces per precious-metal asset in Holdings and omits the Unzen column for Stocks', async () => {
+    render(<Dashboard investments={portfolioWithMetals} onCategoryChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Unzen').length).toBeGreaterThan(0)
+    })
+
+    const goldRow = screen.getAllByText('Gold').map(el => el.closest('tr')).find(Boolean) ?? null
+    expect(goldRow).not.toBeNull()
+    expect(within(goldRow!).getByText('1,652 oz')).toBeInTheDocument()
+
+    const xetraRow = screen.getByText('DT.BOERSE COM. XETRA-GOLD').closest('tr')
+    expect(xetraRow).not.toBeNull()
+    expect(within(xetraRow!).getByText('0,90 oz')).toBeInTheDocument()
+
+    const silverRow = screen.getAllByText('Silber').map(el => el.closest('tr')).find(Boolean) ?? null
+    expect(silverRow).not.toBeNull()
+    expect(within(silverRow!).getByText('9,00 oz')).toBeInTheDocument()
+
+    const xtrackersRow = screen.getByText('XTRACK. ETC SILBER 80').closest('tr')
+    expect(xtrackersRow).not.toBeNull()
+    expect(within(xtrackersRow!).getByText('20,02 oz')).toBeInTheDocument()
+
+    const stocksTable = screen.getByText('Core MSCI World').closest('table')
+    expect(stocksTable).not.toBeNull()
+    expect(within(stocksTable!).queryByText('Unzen')).not.toBeInTheDocument()
+  })
+
+  it('shows the top Unzen pro Lagerstätte summary and updates when a depository changes', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Dashboard investments={portfolioWithMetals} onCategoryChange={vi.fn()} />)
+
+    const summary = container.querySelector('.metal-depo-summary')
+    expect(summary).toBeInTheDocument()
+
+    const sWithin = within(summary as HTMLElement)
+    expect(sWithin.getByText('Unzen pro Lagerstätte')).toBeInTheDocument()
+    expect(sWithin.getByText('2,552 oz Gold')).toBeInTheDocument()
+    expect(sWithin.getByText('29,02 oz Silber')).toBeInTheDocument()
+
+    expect(sWithin.getByText('Kleiderschrank')).toBeInTheDocument()
+    expect(sWithin.getByText('1,652 oz Gold')).toBeInTheDocument()
+    expect(sWithin.getByText('9,00 oz Silber')).toBeInTheDocument()
+
+    expect(sWithin.getByText('Flatex')).toBeInTheDocument()
+    expect(sWithin.getByText('0,90 oz Gold')).toBeInTheDocument()
+    expect(sWithin.getByText('20,02 oz Silber')).toBeInTheDocument()
+
+    // Change Silber depository from Kleiderschrank to Gold Avenue
+    const silverRow = screen.getAllByText('Silber').map(el => el.closest('tr')).find(Boolean)!
+    const depoSelect = within(silverRow).getAllByRole('combobox')[0]
+    await user.selectOptions(depoSelect, 'Gold Avenue')
+
+    await waitFor(() => {
+      expect(sWithin.getByText('Gold Avenue')).toBeInTheDocument()
+      expect(sWithin.getAllByText('9,00 oz Silber').length).toBeGreaterThan(0)
+    })
+
+    // Kleiderschrank should now only have Gold, not Silber
+    const kleiderschrankCard = sWithin.getByText('Kleiderschrank').closest('.metal-depo-card') as HTMLElement
+    expect(within(kleiderschrankCard).getByText('1,652 oz Gold')).toBeInTheDocument()
+    expect(within(kleiderschrankCard).queryByText(/Silber/)).not.toBeInTheDocument()
+  })
+})
+
+
 
 

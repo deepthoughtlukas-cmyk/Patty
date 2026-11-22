@@ -6,7 +6,10 @@ import {
   findProfileForInvestment,
   buildCorePositions,
   computeCoreExposure,
+  computeStageTargetExposure,
+  computeCoreFitSummary,
 } from './coreExposure'
+import { getStage } from './targets'
 
 describe('coreExposure logic', () => {
   const sampleInvestments: Investment[] = [
@@ -119,5 +122,64 @@ describe('coreExposure logic', () => {
     expect(simExp.total).toBeCloseTo(baseExp.total - 5000, 1)
     // Factor role share must decrease
     expect(simExp.roleShares.factor).toBeLessThan(baseExp.roleShares.factor)
+  })
+
+  it('matches ISHARES MSCI INDIA ETF (IE00BZCQB185) and Xtrackers MSCI World (IE00BJ0KDQ92)', () => {
+    const indiaInv: Investment = {
+      name: 'ISHARES MSCI INDIA ETF',
+      isin: 'IE00BZCQB185',
+      wkn: 'A2AFCY',
+      type: 'ETF',
+      quantity: 60,
+      purchasePrice: 8,
+      currentPrice: 7.5,
+      currentValue: 450,
+      currency: 'EUR',
+      exchangeRate: 1,
+      region: 'Indien',
+      sector: 'Diversifizierte Kapitalmärkte',
+      category: 'Stocks',
+      subcategory: 'Core',
+    }
+    const worldInv: Investment = {
+      ...sampleInvestments[1],
+      isin: 'IE00BJ0KDQ92',
+    }
+
+    const indiaProfile = findProfileForInvestment(indiaInv, BUILTIN_PROFILES)
+    expect(indiaProfile?.id).toBe('ishares-msci-india')
+    expect(indiaProfile?.countries).toEqual({ IN: 100 })
+
+    const worldProfile = findProfileForInvestment(worldInv, BUILTIN_PROFILES)
+    expect(worldProfile?.id).toBe('xtrackers-msci-world')
+  })
+
+  it('computes derived target exposure and Core-Fit summary for Stage 3', () => {
+    const stage3 = getStage('stage3')
+    const targetExp = computeStageTargetExposure(stage3, BUILTIN_PROFILES)
+
+    // 6% US SC + 6% EU SC + 2% JP SC + 10% of 16% EM IMI = 15.6%
+    expect(targetExp.size.small).toBeCloseTo(0.156, 2)
+    expect(targetExp.regions.US).toBeCloseTo(0.42, 2)
+    expect(targetExp.regions.EU).toBeCloseTo(0.23, 2)
+    expect(targetExp.countries.US).toBeGreaterThan(0.4)
+
+    // Target portfolio itself should score 100/100 with all regions in band
+    const targetFit = computeCoreFitSummary(targetExp, stage3, targetExp)
+    expect(targetFit.score).toBe(100)
+    expect(targetFit.regionsInBand).toBe(targetFit.totalRegionGroups)
+    expect(targetFit.largestOverweight).toBeNull()
+    expect(targetFit.largestUnderweight).toBeNull()
+
+    // US-heavy portfolio should have lower score and identify US overweight + EM underweight
+    const positions = buildCorePositions(sampleInvestments, BUILTIN_PROFILES)
+    const actualExp = computeCoreExposure(positions)
+    const actualFit = computeCoreFitSummary(actualExp, stage3, targetExp)
+    expect(actualFit.score).toBeLessThan(80)
+    expect(actualFit.largestOverweight?.id).toBe('us')
+    expect(actualFit.largestUnderweight?.id).toBe('eu')
+    expect(actualFit.largestUnderweight!.eurDiff).toBeGreaterThan(0)
+    const emGap = actualFit.regionGaps.find((g) => g.id === 'em')
+    expect(emGap?.eurDiff).toBeGreaterThan(0)
   })
 })

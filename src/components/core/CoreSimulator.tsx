@@ -7,7 +7,7 @@ interface CoreSimulatorProps {
   simulatedDeltas: Record<string, number>
   onDeltaChange: (key: string, delta: number) => void
   onReset: () => void
-  onApplyPlan: () => void
+  onApplyPlan?: () => void
 }
 
 function fmtEur(v: number): string {
@@ -22,6 +22,7 @@ export const CoreSimulator: React.FC<CoreSimulatorProps> = ({
   onApplyPlan,
 }) => {
   const [mode, setMode] = useState<'neutral' | 'inflow'>('neutral')
+  const [planConfirmed, setPlanConfirmed] = useState(false)
 
   // Im neutralen Modus: Summe aller Verkäufe (negative Deltas) als Rebalancing-Budget
   const totalSells = Object.values(simulatedDeltas)
@@ -279,8 +280,14 @@ export const CoreSimulator: React.FC<CoreSimulatorProps> = ({
       </div>
 
       {hasAnyDelta && (
-        <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {planConfirmed && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--green)' }}>
+              Simulationswerte sind oben in der Analyse aktiv.
+            </span>
+          )}
           <button
+            type="button"
             className="btn btn-sm"
             style={{
               background: 'var(--gold)',
@@ -290,7 +297,10 @@ export const CoreSimulator: React.FC<CoreSimulatorProps> = ({
               alignItems: 'center',
               gap: 6,
             }}
-            onClick={onApplyPlan}
+            onClick={() => {
+              setPlanConfirmed(true)
+              onApplyPlan?.()
+            }}
           >
             <Check size={14} />
             Als Rebalancing-Plan übernehmen

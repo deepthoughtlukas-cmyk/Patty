@@ -42,6 +42,7 @@ export interface Investment {
   category: AssetCategory
   subcategory: string
   _originalKey?: string
+  _ounces?: number
 }
 
 /** Parse a German-formatted number string (e.g. "1.234,56" or "254,519") */

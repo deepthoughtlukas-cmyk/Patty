@@ -1,9 +1,11 @@
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import type { Investment } from '../../utils/parser'
 import type { CoreProfile, CoreRole } from '../../utils/core/types'
 import {
   buildCorePositions,
   computeCoreExposure,
+  computeStageTargetExposure,
+  computeCoreFitSummary,
 } from '../../utils/core/coreExposure'
 import {
   getAllProfiles,
@@ -11,31 +13,28 @@ import {
   setRoleOverride,
   loadTargetStageId,
   saveTargetStageId,
+  loadCoreSparplanConfig,
+  saveCoreSparplanConfig,
 } from '../../utils/core/profileStore'
 import { getStage } from '../../utils/core/targets'
-import { optimizeCoreOrders } from '../../utils/core/coreOptimizer'
+import { buildPhasedRoadmap, diagnoseCoreGaps } from '../../utils/core/coreOptimizer'
 import { CoreKpiHeader } from './CoreKpiHeader'
 import { CoreSimulator } from './CoreSimulator'
-import { CoreExposureCharts } from './CoreExposureCharts'
+import { CoreExposureCharts, type ScenarioViewMode } from './CoreExposureCharts'
 import { CoreHoldingsTable } from './CoreHoldingsTable'
 import { CoreProfileModal } from './CoreProfileModal'
-import { CoreSparplanProjection } from './CoreSparplanProjection'
-import { Sliders, Copy, Check, Info, Calendar } from 'lucide-react'
+import { CoreRoadmapPanel } from './CoreRoadmapPanel'
+import { ChevronDown, ChevronRight, Layers, Sliders } from 'lucide-react'
 
 interface CoreDashboardTabProps {
   investments: Investment[]
   suggestedCoreBuy?: number
 }
 
-function fmtEur(v: number): string {
-  return `€ ${v.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-}
-
 export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
   investments,
   suggestedCoreBuy = 0,
 }) => {
-  // 1. Stage-Auswahl (Stufe 2 vs Stufe 3)
   const [stageId, setStageId] = useState<'stage2' | 'stage3'>(() => loadTargetStageId())
   const activeStage = useMemo(() => getStage(stageId), [stageId])
 
@@ -44,7 +43,6 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
     saveTargetStageId(id)
   }, [])
 
-  // 2. Rollen-Overrides & Profile
   const [roleOverrides, setRoleOverrides] = useState<Record<string, CoreRole>>(() => loadRoleOverrides())
   const allProfiles = useMemo(() => getAllProfiles(), [])
 
@@ -53,12 +51,15 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
     setRoleOverrides((prev) => ({ ...prev, [profileId]: role }))
   }, [])
 
-  // 3. Core Positionen
   const positions = useMemo(() => {
     return buildCorePositions(investments, allProfiles, roleOverrides)
   }, [investments, allProfiles, roleOverrides])
 
-  // 4. Simulator-State (Deltas in Euro)
+  const unmatchedCount = useMemo(
+    () => positions.filter((p) => !p.profile && p.value > 0).length,
+    [positions]
+  )
+
   const [simulatedDeltas, setSimulatedDeltas] = useState<Record<string, number>>({})
 
   const handleDeltaChange = useCallback((key: string, delta: number) => {
@@ -72,11 +73,14 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
     setSimulatedDeltas({})
   }, [])
 
-  // 5. Basis- und Simuliertes Exposure
   const baseExposure = useMemo(() => computeCoreExposure(positions, {}), [positions])
   const simulatedExposure = useMemo(
     () => computeCoreExposure(positions, simulatedDeltas),
     [positions, simulatedDeltas]
+  )
+  const targetExposure = useMemo(
+    () => computeStageTargetExposure(activeStage, allProfiles),
+    [activeStage, allProfiles]
   )
 
   const isSimulated = useMemo(
@@ -84,38 +88,85 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
     [simulatedDeltas]
   )
 
-  // Gesamtwert von 'Stocks' für die KPI-Quote
   const stocksTotalValue = useMemo(() => {
     return investments
       .filter((inv) => inv.category === 'Stocks' && inv.currentValue > 0)
       .reduce((s, inv) => s + inv.currentValue, 0)
   }, [investments])
 
-  // 6. Optimierer / Kaufplaner-State
-  const [plannerView, setPlannerView] = useState<'sparplan' | 'model'>('sparplan')
-  const [optimizerBudget, setOptimizerBudget] = useState<number>(() => Math.max(suggestedCoreBuy, 1000))
-  const [optimizerMode, setOptimizerMode] = useState<'buy-only' | 'rebalance'>('buy-only')
-  const [copiedOrders, setCopiedOrders] = useState(false)
+  // Fahrplan-Konfiguration
+  const savedConfig = useMemo(() => loadCoreSparplanConfig(), [])
+  const [monthlyBudget, setMonthlyBudget] = useState<number>(() =>
+    savedConfig?.monthlyBudget && savedConfig.monthlyBudget > 0
+      ? savedConfig.monthlyBudget
+      : Math.max(50, suggestedCoreBuy > 0 ? suggestedCoreBuy : 1000)
+  )
+  const [maxPositions, setMaxPositions] = useState<number>(() => savedConfig?.maxPositions ?? 4)
+  const [projectionHorizon, setProjectionHorizon] = useState<number>(
+    () => savedConfig?.projectionHorizon ?? 36
+  )
+  const [includeCandidates, setIncludeCandidates] = useState<boolean>(
+    () => Boolean(savedConfig?.includeCandidates)
+  )
 
-  const optimizationResult = useMemo(() => {
-    return optimizeCoreOrders(positions, activeStage, optimizerBudget, optimizerMode)
-  }, [positions, activeStage, optimizerBudget, optimizerMode])
+  useEffect(() => {
+    saveCoreSparplanConfig({
+      monthlyBudget,
+      maxPositions,
+      projectionHorizon,
+      includeCandidates,
+    })
+  }, [monthlyBudget, maxPositions, projectionHorizon, includeCandidates])
 
-  const handleApplyOptimizerToSimulator = useCallback(() => {
-    setSimulatedDeltas(optimizationResult.simulatedDeltas)
-  }, [optimizationResult.simulatedDeltas])
+  const roadmap = useMemo(
+    () =>
+      buildPhasedRoadmap(positions, activeStage, monthlyBudget, {
+        maxPositions,
+        maxMonths: projectionHorizon,
+        includeModelCandidates: includeCandidates,
+      }),
+    [positions, activeStage, monthlyBudget, maxPositions, projectionHorizon, includeCandidates]
+  )
 
-  const handleCopyOrderText = useCallback(() => {
-    const lines = optimizationResult.orders.map(
-      (o) => `${o.action === 'BUY' ? 'KAUFEN' : 'VERKAUFEN'} ${fmtEur(o.amount)} -> ${o.name} (${o.isin})`
-    )
-    navigator.clipboard.writeText(lines.join('\n'))
-    setCopiedOrders(true)
-    setTimeout(() => setCopiedOrders(false), 2000)
-  }, [optimizationResult.orders])
+  const diagnostics = useMemo(
+    () => diagnoseCoreGaps(positions, baseExposure, activeStage, targetExposure),
+    [positions, baseExposure, activeStage, targetExposure]
+  )
 
-  // 7. Detail-Inspektor Modal
+  // Szenario-Vorschau (Heute | Nach 12 M | Ziel | Simulation)
+  const [scenarioChoice, setScenarioChoice] = useState<'now' | 'plan12m' | 'target'>('now')
+  const scenarioMode: ScenarioViewMode = isSimulated ? 'sim' : scenarioChoice
+
+  const handleSelectScenario = useCallback((mode: 'now' | 'plan12m' | 'target') => {
+    setSimulatedDeltas({})
+    setScenarioChoice(mode)
+  }, [])
+
+  const displayExposure = useMemo(() => {
+    if (scenarioMode === 'sim') return simulatedExposure
+    if (scenarioMode === 'plan12m') return roadmap.exposureAfter12m
+    if (scenarioMode === 'target') return targetExposure
+    return baseExposure
+  }, [scenarioMode, simulatedExposure, roadmap.exposureAfter12m, targetExposure, baseExposure])
+
+  const fitSummary = useMemo(
+    () => computeCoreFitSummary(displayExposure, activeStage, targetExposure),
+    [displayExposure, activeStage, targetExposure]
+  )
+
+  // Experten-Drawer State
+  const [showSimulator, setShowSimulator] = useState(false)
+  const [showHoldings, setShowHoldings] = useState(() => unmatchedCount > 0)
   const [inspectProfile, setInspectProfile] = useState<CoreProfile | null>(null)
+
+  const handleApplyToSimulator = useCallback((deltas: Record<string, number>) => {
+    setSimulatedDeltas(deltas)
+    setShowSimulator(true)
+  }, [])
+
+  const handleOpenHoldings = useCallback(() => {
+    setShowHoldings(true)
+  }, [])
 
   if (positions.length === 0) {
     return (
@@ -140,284 +191,118 @@ export const CoreDashboardTab: React.FC<CoreDashboardTabProps> = ({
     )
   }
 
+  const matchedCount = positions.length - unmatchedCount
+
   return (
     <div className="animate-in">
-      {/* 1. KPI-Leiste */}
+      {/* Ebene 1: Gesundheitscheck */}
       <CoreKpiHeader
-        exposure={simulatedExposure}
+        exposure={displayExposure}
         baseExposure={baseExposure}
+        targetExposure={targetExposure}
+        fitSummary={fitSummary}
         stocksTotalValue={stocksTotalValue}
         activeStage={activeStage}
         onSelectStage={handleSelectStage}
         isSimulated={isSimulated}
+        onResetSimulation={handleResetSimulation}
+        unmatchedCount={unmatchedCount}
+        onOpenHoldings={handleOpenHoldings}
       />
 
-      {/* 2. Interaktiver What-If Simulator */}
-      <CoreSimulator
-        positions={positions}
-        simulatedDeltas={simulatedDeltas}
-        onDeltaChange={handleDeltaChange}
-        onReset={handleResetSimulation}
-        onApplyPlan={() => {
-          // Toast oder visuelle Bestätigung
-          alert('Simulierter Plan aktiv! Die Exposures spiegeln nun deine Schieberegler wider.')
-        }}
-      />
-
-      {/* 3. Exposure Charts (Regionen, Währungen, Size & Faktoren) */}
+      {/* Ebene 2: Einheitliche Ist-vs.-Soll Diagnose */}
       <CoreExposureCharts
-        exposure={simulatedExposure}
+        exposure={displayExposure}
         baseExposure={baseExposure}
+        targetExposure={targetExposure}
         targetStage={activeStage}
+        scenarioMode={scenarioMode}
+        onSelectScenario={handleSelectScenario}
+        hasPlan12m={monthlyBudget > 0}
         isSimulated={isSimulated}
       />
 
-      {/* 4. Core Sparplan-Rechner & Kaufplaner */}
-      <div
-        style={{
-          background: 'var(--bg-card)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--border)',
-          padding: '20px',
-          marginBottom: '24px',
-        }}
-      >
-        {/* Navigation Tabs zwischen Sparplan (vorhandene ETFs) und Modell-Rebalancing */}
-        <div
-          style={{
-            display: 'flex',
-            gap: '8px',
-            marginBottom: '18px',
-            borderBottom: '1px solid var(--border)',
-            paddingBottom: '12px',
-            flexWrap: 'wrap',
-          }}
+      {/* Ebene 3: Geführter Fahrplan */}
+      <CoreRoadmapPanel
+        positions={positions}
+        baseExposure={baseExposure}
+        targetStage={activeStage}
+        targetExposure={targetExposure}
+        suggestedCoreBuy={suggestedCoreBuy}
+        monthlyBudget={monthlyBudget}
+        onMonthlyBudgetChange={setMonthlyBudget}
+        includeCandidates={includeCandidates}
+        onIncludeCandidatesChange={setIncludeCandidates}
+        maxPositions={maxPositions}
+        onMaxPositionsChange={setMaxPositions}
+        projectionHorizon={projectionHorizon}
+        onProjectionHorizonChange={setProjectionHorizon}
+        roadmap={roadmap}
+        diagnostics={diagnostics}
+        onApplyToSimulator={handleApplyToSimulator}
+        onOpenHoldings={handleOpenHoldings}
+      />
+
+      {/* Experten-Bereich 1: What-If Simulator (standardmäßig eingeklappt) */}
+      <div className="core-drawer">
+        <button
+          type="button"
+          className="core-drawer-trigger"
+          aria-expanded={showSimulator}
+          onClick={() => setShowSimulator((v) => !v)}
         >
-          <button
-            className={`btn btn-sm ${plannerView === 'sparplan' ? '' : 'btn-ghost'}`}
-            style={{
-              background: plannerView === 'sparplan' ? 'var(--gold)' : 'transparent',
-              color: plannerView === 'sparplan' ? '#000' : 'var(--text-secondary)',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-            onClick={() => setPlannerView('sparplan')}
-          >
-            <Calendar size={14} />
-            <span>Monatlicher Sparplan & Projektion (Vorhandene ETFs)</span>
-          </button>
-          <button
-            className={`btn btn-sm ${plannerView === 'model' ? '' : 'btn-ghost'}`}
-            style={{
-              background: plannerView === 'model' ? 'var(--gold)' : 'transparent',
-              color: plannerView === 'model' ? '#000' : 'var(--text-secondary)',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-            onClick={() => setPlannerView('model')}
-          >
-            <Sliders size={14} />
-            <span>Einmalkauf / Rebalancing (Whitepaper Modell)</span>
-          </button>
-        </div>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {showSimulator ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <Sliders size={14} color="var(--gold)" />
+            <span>Manuell simulieren (What-If)</span>
+          </span>
+          <span className="core-drawer-meta">
+            {isSimulated ? 'Simulation aktiv' : 'Schieberegler je ETF'}
+          </span>
+        </button>
 
-        {plannerView === 'sparplan' ? (
-          <CoreSparplanProjection
-            positions={positions}
-            targetStage={activeStage}
-            initialMonthlyBudget={suggestedCoreBuy > 0 ? suggestedCoreBuy : 1000}
-            onApplyToSimulator={(deltas) => setSimulatedDeltas(deltas)}
-          />
-        ) : (
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '12px',
-                marginBottom: '16px',
-              }}
-            >
-              <div>
-                <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Core-Kaufplaner & Rebalancing-Generator (Modell-ETFs)
-                </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Berechnet gezielte Zukäufe oder Umschichtungen anhand der Musterportfolios, um das {activeStage.label.split(':')[0]} zu erreichen.
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Budget:</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={50}
-                    value={optimizerBudget}
-                    onChange={(e) => setOptimizerBudget(Math.max(0, parseFloat(e.target.value) || 0))}
-                    style={{
-                      width: '90px',
-                      background: 'var(--bg-surface)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '4px 8px',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                    }}
-                  />
-                  <span style={{ color: 'var(--text-muted)' }}>€</span>
-                </div>
-
-                <select
-                  value={optimizerMode}
-                  onChange={(e) => setOptimizerMode(e.target.value as 'buy-only' | 'rebalance')}
-                  style={{
-                    background: 'var(--bg-surface)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '4px 8px',
-                    fontSize: '0.82rem',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="buy-only">Nur Zukauf (Sparplan / Steuerneutral)</option>
-                  <option value="rebalance">Voll-Rebalancing (Kauf & Verkauf)</option>
-                </select>
-              </div>
-            </div>
-
-            {suggestedCoreBuy > 0 && optimizerBudget !== suggestedCoreBuy && (
-              <div
-                style={{
-                  fontSize: '0.78rem',
-                  color: 'var(--gold)',
-                  background: 'rgba(240, 192, 64, 0.08)',
-                  padding: '6px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  marginBottom: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Info size={13} />
-                  <span>Core-First Signal empfiehlt aktuell einen Zukauf von <strong>{fmtEur(suggestedCoreBuy)}</strong> in den Core.</span>
-                </div>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  style={{ fontSize: '0.72rem', color: 'var(--gold)' }}
-                  onClick={() => setOptimizerBudget(suggestedCoreBuy)}
-                >
-                  Betrag übernehmen
-                </button>
-              </div>
-            )}
-
-            {optimizationResult.orders.length > 0 ? (
-              <div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
-                  {optimizationResult.orders.map((o) => (
-                    <div
-                      key={o.profileId}
-                      style={{
-                        background: 'var(--bg-surface)',
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-sm)',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        border: '1px solid var(--border)',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.88rem' }}>
-                          {o.name}
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          {o.isin} · {o.reason}
-                        </div>
-                      </div>
-
-                      <div style={{ textAlign: 'right' }}>
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            fontSize: '0.95rem',
-                            color: o.action === 'BUY' ? 'var(--green)' : 'var(--red)',
-                          }}
-                        >
-                          {o.action === 'BUY' ? '+ ' : '- '}{fmtEur(o.amount)}
-                        </div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                          Zielquote: {(o.targetShare * 100).toFixed(0)} %
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                  <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                    Budget verwendet: <strong>{fmtEur(optimizationResult.budgetUsed)}</strong>
-                    {optimizationResult.remainingBudget > 0 && (
-                      <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
-                        ({fmtEur(optimizationResult.remainingBudget)} Rest)
-                      </span>
-                    )}
-                  </span>
-
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                      onClick={handleCopyOrderText}
-                    >
-                      {copiedOrders ? <Check size={12} color="var(--green)" /> : <Copy size={12} />}
-                      <span>{copiedOrders ? 'Kopiert!' : 'Orderliste kopieren'}</span>
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      style={{
-                        background: 'var(--gold)',
-                        color: '#000',
-                        fontWeight: 600,
-                      }}
-                      onClick={handleApplyOptimizerToSimulator}
-                      title="Übernimmt diese Zukäufe in die Schieberegler des Simulators"
-                    >
-                      In Simulator übertragen
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px' }}>
-                Kein Zukaufbedarf ermittelt oder Budget zu gering.
-              </div>
-            )}
+        {showSimulator && (
+          <div className="core-drawer-body">
+            <CoreSimulator
+              positions={positions}
+              simulatedDeltas={simulatedDeltas}
+              onDeltaChange={handleDeltaChange}
+              onReset={handleResetSimulation}
+            />
           </div>
         )}
       </div>
 
-      {/* 5. Holdings-Tabelle mit Rollen-Override und Profil-Inspektor */}
-      <CoreHoldingsTable
-        positions={positions}
-        totalValue={baseExposure.total}
-        onRoleChange={handleRoleChange}
-        onInspectProfile={setInspectProfile}
-      />
+      {/* Experten-Bereich 2: Core-ETFs & Profil-Zuordnung */}
+      <div className="core-drawer">
+        <button
+          type="button"
+          className="core-drawer-trigger"
+          aria-expanded={showHoldings}
+          onClick={() => setShowHoldings((v) => !v)}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {showHoldings ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <Layers size={14} color="var(--blue)" />
+            <span>Core-ETFs & Profil-Zuordnung</span>
+          </span>
+          <span className="core-drawer-meta" style={unmatchedCount > 0 ? { color: 'var(--gold)' } : undefined}>
+            {positions.length} ETFs · {matchedCount}/{positions.length} Profile · Ø TER {baseExposure.ter.toFixed(2)} %
+          </span>
+        </button>
 
-      {/* 6. Profil-Inspektor Modal */}
+        {showHoldings && (
+          <div className="core-drawer-body">
+            <CoreHoldingsTable
+              positions={positions}
+              totalValue={baseExposure.total}
+              onRoleChange={handleRoleChange}
+              onInspectProfile={setInspectProfile}
+            />
+          </div>
+        )}
+      </div>
+
       <CoreProfileModal
         profile={inspectProfile}
         onClose={() => setInspectProfile(null)}

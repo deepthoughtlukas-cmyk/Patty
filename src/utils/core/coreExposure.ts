@@ -1,8 +1,10 @@
 import type { Investment } from '../parser'
 import { investmentKey, validIsin } from '../userRules'
-import { currencyOf, regionOf, ALL_REGIONS, ALL_FACTORS } from './countries'
+import { currencyOf, regionOf, ALL_FACTORS } from './countries'
+import { BUILTIN_PROFILES } from './builtinProfiles'
 import { getAllProfiles, loadRoleOverrides } from './profileStore'
-import type { CoreExposure, CorePosition, CoreProfile, CoreRole, FactorKey, RegionKey, SizeSplit } from './types'
+import { FACTOR_BUDGET_CAP, REGION_TOLERANCE } from './targets'
+import type { CoreExposure, CorePosition, CoreProfile, CoreRole, FactorKey, RegionKey, SizeSplit, TargetStage } from './types'
 
 /**
  * Filtert alle aktiven Core-Investments heraus:
@@ -157,5 +159,119 @@ export function computeCoreExposure(
     factors,
     roleShares,
     ter: avgTer,
+  }
+}
+
+export interface RegionGapItem {
+  id: string
+  label: string
+  regions: RegionKey[]
+  actual: number
+  target: number
+  diff: number
+  eurDiff: number
+  inTolerance: boolean
+}
+
+export interface CoreFitSummary {
+  score: number
+  regionsInBand: number
+  totalRegionGroups: number
+  regionGaps: RegionGapItem[]
+  largestOverweight: RegionGapItem | null
+  largestUnderweight: RegionGapItem | null
+  smallCapActual: number
+  smallCapTarget: number
+  smallCapInBand: boolean
+  factorOverBudget: boolean
+}
+
+/**
+ * Berechnet das implizite Soll-Exposure (Länder, Regionen, Währungen, Size, Faktoren, TER)
+ * direkt aus den Modell-Bausteinen einer Zielstrategie (Stufe 2 oder Stufe 3).
+ */
+export function computeStageTargetExposure(
+  stage: TargetStage,
+  profiles?: CoreProfile[]
+): CoreExposure {
+  const catalog = profiles ?? getAllProfiles()
+  const catalogMap = new Map(catalog.map((p) => [p.id, p]))
+  const builtinMap = new Map(BUILTIN_PROFILES.map((p) => [p.id, p]))
+
+  const syntheticPositions: CorePosition[] = stage.model.map((item) => {
+    const profile = catalogMap.get(item.profileId) ?? builtinMap.get(item.profileId) ?? null
+    return {
+      key: `target-${item.profileId}`,
+      name: profile?.name ?? item.profileId,
+      value: item.weight * 10000,
+      profile,
+      role: profile?.role ?? 'market',
+    }
+  })
+
+  return computeCoreExposure(syntheticPositions)
+}
+
+/**
+ * Verdichtet die Abweichungen zu Zielregionen, Market Cap und Faktor-Cap in einen 0-100 Core-Fit Score.
+ */
+export function computeCoreFitSummary(
+  exposure: CoreExposure,
+  targetStage: TargetStage,
+  targetExposure: CoreExposure
+): CoreFitSummary {
+  const regionGaps: RegionGapItem[] = targetStage.groups.map((group) => {
+    const actual = group.regions.reduce((s, r) => s + (exposure.regions[r] || 0), 0)
+    const target = group.target
+    const diff = actual - target
+    const eurDiff = (target - actual) * exposure.total
+    const inTolerance = Math.abs(diff) <= REGION_TOLERANCE
+    return {
+      id: group.id,
+      label: group.label,
+      regions: group.regions,
+      actual,
+      target,
+      diff,
+      eurDiff,
+      inTolerance,
+    }
+  })
+
+  const regionsInBand = regionGaps.filter((g) => g.inTolerance).length
+  const totalRegionGroups = regionGaps.length
+
+  const largestOverweight =
+    regionGaps
+      .filter((g) => !g.inTolerance && g.diff > 0)
+      .sort((a, b) => b.diff - a.diff)[0] ?? null
+
+  const largestUnderweight =
+    regionGaps
+      .filter((g) => !g.inTolerance && g.diff < 0)
+      .sort((a, b) => a.diff - b.diff)[0] ?? null
+
+  const l1Regions = regionGaps.reduce((s, g) => s + Math.abs(g.diff), 0)
+  const smallCapActual = exposure.size.small
+  const smallCapTarget = targetExposure.size.small
+  const smallCapDiff = Math.abs(smallCapActual - smallCapTarget)
+  const sizePenalty = targetStage.id === 'stage3' ? Math.max(0, smallCapDiff - 0.01) * 120 : 0
+  const factorPenalty = Math.max(0, exposure.roleShares.factor - FACTOR_BUDGET_CAP) * 50
+
+  const score = Math.round(Math.max(0, Math.min(100, 100 - l1Regions * 110 - sizePenalty - factorPenalty)))
+  const smallCapInBand = targetStage.id === 'stage2' ? true : smallCapDiff <= 0.025
+  const factorOverBudget = exposure.roleShares.factor > FACTOR_BUDGET_CAP
+
+  return {
+    score,
+    regionsInBand,
+    totalRegionGroups,
+    regionGaps,
+    largestOverweight,
+    largestUnderweight,
+    smallCapActual,
+    smallCapTarget,
+    smallCapInBand,
+    factorOverBudget,
   }
 }

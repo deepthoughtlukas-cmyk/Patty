@@ -5,7 +5,10 @@ import {
   optimizeCoreOrders,
   optimizeExistingCoreSparplan,
   projectSparplanTimeline,
+  diagnoseCoreGaps,
+  buildPhasedRoadmap,
 } from './coreOptimizer'
+import { computeCoreExposure, computeStageTargetExposure } from './coreExposure'
 import { BUILTIN_PROFILES } from './builtinProfiles'
 
 describe('coreOptimizer logic with existing ETFs & projection', () => {
@@ -104,5 +107,57 @@ describe('coreOptimizer logic with existing ETFs & projection', () => {
     expect(sparplan).toHaveLength(2)
     expect(sparplan.map((s) => s.key)).toEqual(expect.arrayContaining(selectedKeys))
     expect(sparplan.reduce((s, i) => s + i.amount, 0)).toBe(500)
+  })
+
+  it('diagnoses factor budget excess, unmatched ETFs, and missing regional/SC access', () => {
+    const partialPositions: CorePosition[] = [
+      userPositions[0], // factor 9800 (US-heavy)
+      userPositions[1], // market 7200 (US-heavy)
+      {
+        key: 'pos-unmatched',
+        name: 'Mystery Core ETF',
+        value: 1000,
+        profile: null,
+        role: 'market',
+      },
+    ]
+
+    const exp = computeCoreExposure(partialPositions)
+    const targetExp = computeStageTargetExposure(stage3, BUILTIN_PROFILES)
+    const diagnostics = diagnoseCoreGaps(partialPositions, exp, stage3, targetExp)
+
+    const ids = diagnostics.map((d) => d.id)
+    expect(ids).toContain('unmatched-profiles')
+    expect(ids).toContain('factor-budget-over')
+    expect(ids.some((id) => id === 'missing-region-access' || id === 'missing-smallcap-access')).toBe(true)
+  })
+
+  it('builds a phased roadmap that shifts allocations and improves 12m exposure', () => {
+    const roadmap = buildPhasedRoadmap(userPositions, stage3, 1000, {
+      maxPositions: 4,
+      maxMonths: 24,
+      includeModelCandidates: false,
+    })
+
+    expect(roadmap.phases.length).toBeGreaterThanOrEqual(1)
+    expect(roadmap.phases.length).toBeLessThanOrEqual(3)
+    expect(roadmap.phases[0].startMonth).toBe(1)
+
+    const phase1Total = roadmap.phases[0].allocations.reduce((s, a) => s + a.amount, 0)
+    expect(phase1Total).toBe(1000)
+
+    const baseExp = computeCoreExposure(userPositions)
+    expect(roadmap.exposureAfter12m.regions.US).toBeLessThan(baseExp.regions.US)
+    expect(roadmap.exposureAfter12m.regions.EM).toBeGreaterThan(baseExp.regions.EM)
+    expect(roadmap.exposureAfter12m.size.small).toBeGreaterThan(baseExp.size.small)
+
+    // With includeModelCandidates enabled, candidate ETFs from stage3 model can appear
+    const candidateRoadmap = buildPhasedRoadmap([userPositions[1]], stage3, 1000, {
+      maxPositions: 4,
+      maxMonths: 24,
+      includeModelCandidates: true,
+    })
+    expect(candidateRoadmap.phases.length).toBeGreaterThanOrEqual(1)
+    expect(candidateRoadmap.phases[0].allocations.some((a) => a.isCandidate)).toBe(true)
   })
 })

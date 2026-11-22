@@ -2656,3 +2656,714 @@ tr.dimmed-row:hover {
     padding: 22px 16px;
   }
 }
+
+/* ===========================
+   Metal Prices Live Bar
+   =========================== */
+
+.metal-prices-bar {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+
+.metal-prices-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.metal-prices-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.metal-prices-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.metal-price-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+
+.metal-price-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.metal-price-label {
+  color: var(--text-secondary);
+}
+
+.metal-price-value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.metal-prices-meta {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.metal-prices-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metal-prices-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: var(--red);
+  font-size: 0.78rem;
+}
+
+.coin-fetch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+}
+
+.coin-fetch-btn:hover:not(:disabled) {
+  color: var(--gold);
+  background: rgba(240, 192, 64, 0.1);
+}
+
+.coin-fetch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (max-width: 640px) {
+  .metal-prices-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .metal-fetch-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .metal-depo-card {
+    flex: 1 1 100%;
+  }
+}
+
+/* ===========================
+   Metal Ounces & Depository Summary
+   =========================== */
+
+.metal-depo-summary {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.metal-depo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.metal-depo-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.metal-depo-totals {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.metal-depo-total-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.metal-depo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metal-depo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 150px;
+}
+
+.metal-depo-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.metal-depo-values {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.metal-depo-val {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.metal-oz-cell {
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sub-oz-badge {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--gold);
+  background: rgba(240, 192, 64, 0.1);
+  border: 1px solid rgba(240, 192, 64, 0.25);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ===========================
+   Core Steuerung 3-Level Cockpit
+   =========================== */
+
+.core-cockpit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--bg-card);
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+.core-stage-switch {
+  display: inline-flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.core-stage-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.core-stage-btn.active {
+  background: var(--gold);
+  color: #0d0f14;
+}
+
+.core-sim-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(240, 192, 64, 0.16);
+  color: var(--gold);
+  border: 1px solid rgba(240, 192, 64, 0.35);
+}
+
+.core-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.core-cap-mini-bar {
+  display: flex;
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-surface);
+  margin-top: 8px;
+}
+
+.core-inline-warn-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(240, 192, 64, 0.35);
+  background: rgba(240, 192, 64, 0.12);
+  color: var(--gold);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.core-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.core-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.core-segment-tabs {
+  display: inline-flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.core-segment-tab {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.core-segment-tab:hover {
+  color: var(--text-primary);
+}
+
+.core-segment-tab.active {
+  background: var(--gold);
+  color: #0d0f14;
+}
+
+.core-scenario-pills {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.core-scenario-pill {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.core-scenario-pill.active {
+  background: var(--bg-card-hover);
+  color: var(--gold);
+}
+
+.core-scenario-pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.core-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.core-subpanel-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.core-bar-track {
+  position: relative;
+  height: 14px;
+  background: var(--bg-surface);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.core-tolerance-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border-left: 1px dashed rgba(255, 255, 255, 0.25);
+  border-right: 1px dashed rgba(255, 255, 255, 0.25);
+  z-index: 0;
+}
+
+.core-target-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+  z-index: 2;
+}
+
+.core-cap-stacked {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+
+.core-country-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+.core-region-tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.core-klumpen-badge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.core-factor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.core-factor-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.core-factor-chip.tone-high {
+  border-color: rgba(240, 192, 64, 0.4);
+}
+
+.core-factor-chip.tone-mid {
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+.core-factor-chip.tone-low {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.core-factor-level {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.core-roadmap-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.core-param-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+
+.core-budget-input {
+  width: 92px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.core-diagnostic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.core-diagnostic-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.core-diagnostic-item.warning {
+  border-color: rgba(240, 192, 64, 0.35);
+  background: rgba(240, 192, 64, 0.06);
+}
+
+.core-diagnostic-item.info {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(96, 165, 250, 0.05);
+}
+
+.core-milestones-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.core-milestone-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+}
+
+.core-milestone-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.core-phase-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+
+.core-phase-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.core-phase-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(240, 192, 64, 0.16);
+  color: var(--gold);
+  border: 1px solid rgba(240, 192, 64, 0.3);
+}
+
+.core-milestone-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--green);
+}
+
+.core-alloc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.core-new-badge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(96, 165, 250, 0.18);
+  color: var(--blue);
+}
+
+.core-drawer {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.core-drawer-trigger {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 18px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.core-drawer-trigger:hover {
+  background: var(--bg-card-hover);
+}
+
+.core-drawer-meta {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.core-drawer-body {
+  padding: 0 14px 14px;
+}
+
+@media (max-width: 768px) {
+  .core-two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .core-country-row {
+    flex-wrap: wrap;
+  }
+}

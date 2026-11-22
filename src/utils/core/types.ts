@@ -89,6 +89,7 @@ export interface CoreSparplanConfig {
   customAmounts?: Record<string, number>
   projectionHorizon?: number
   maxPositions?: number
+  includeCandidates?: boolean
 }
 
 export type { Investment }

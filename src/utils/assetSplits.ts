@@ -1,5 +1,6 @@
 import type { Investment } from './parser'
 import { investmentKey } from './userRules'
+import { TROY_OZ_IN_GRAMS, XTRACKERS_SILVER_OZ_PER_SHARE, GRAM_GOLD_ETFS } from './metalOunces'
 
 const STORAGE_KEY = 'patty-asset-splits'
 
@@ -87,19 +88,24 @@ export function applySplits(investments: Investment[]): Investment[] {
 
     let effectiveTotalOunces = config.totalOunces
     const hasValidIsin = inv.isin && inv.isin.toUpperCase() !== 'N/A' && inv.isin.length >= 6
-    
-    if (inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80')) {
-      effectiveTotalOunces = inv.quantity * 3
-    } else if (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(inv.isin?.toUpperCase() || '') || inv.name.toUpperCase().includes('XETRA-GOLD')) {
-      effectiveTotalOunces = inv.quantity / 31.1035
-    } else if (hasValidIsin && (inv.name.toUpperCase().includes('SILBER') || inv.name.toUpperCase().includes('SILVER') || inv.isin === 'XC0009653103')) {
+    const isinUpper = inv.isin?.toUpperCase() || ''
+    const nameUpper = inv.name.toUpperCase()
+
+    if (isinUpper === 'DE000A2T0VS9' || nameUpper.includes('SILBER 80')) {
+      effectiveTotalOunces = inv.quantity * XTRACKERS_SILVER_OZ_PER_SHARE
+    } else if (GRAM_GOLD_ETFS.includes(isinUpper) || nameUpper.includes('XETRA-GOLD') || nameUpper.includes('EUWAX GOLD')) {
+      effectiveTotalOunces = inv.quantity / TROY_OZ_IN_GRAMS
+    } else if (hasValidIsin && (nameUpper.includes('SILBER') || nameUpper.includes('SILVER') || isinUpper === 'XC0009653103')) {
       // Standard Silver ETCs (WisdomTree, iShares, Invesco) trade at ~1 oz per share
       effectiveTotalOunces = inv.quantity
     }
 
+    let totalSplitOunces = 0
+
     for (const split of config.splits) {
       const denomWeight = parseDenomination(split.denomination)
       const splitOunces = split.coinCount * denomWeight
+      totalSplitOunces += splitOunces
       const fraction = splitOunces / effectiveTotalOunces
 
       const splitValue = inv.currentValue * fraction
@@ -115,6 +121,7 @@ export function applySplits(investments: Investment[]): Investment[] {
         purchasePrice: split.coinCount > 0 ? splitCost / split.coinCount : 0,
         isin: `${inv.isin ? inv.isin + '-' : ''}split-${split.id}`,
         _originalKey: investmentKey(inv),
+        _ounces: splitOunces,
       }
 
       // To ensure investmentKey(splitInv) maps exactly to getSplitInvestmentKey
@@ -146,6 +153,7 @@ export function applySplits(investments: Investment[]): Investment[] {
         purchasePrice: remainingQuantity > 0 ? remainingCost / remainingQuantity : remainingCost,
         isin: restKey,
         _originalKey: investmentKey(inv),
+        _ounces: Math.max(0, effectiveTotalOunces - totalSplitOunces),
       })
     }
   }

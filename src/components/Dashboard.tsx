@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera, SlidersHorizontal, Target } from 'lucide-react'
+import { Database, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, UserCheck, Trash2, Download, Upload, Plus, Coins, Layers, Globe, Settings, BarChart3, X, FileText, Eye, EyeOff, Smartphone, Edit2, Check, RotateCcw, Camera, SlidersHorizontal, Target, RefreshCw } from 'lucide-react'
 import { toJpeg } from 'html-to-image'
 import download from 'downloadjs'
 import type { Investment, AssetCategory } from '../utils/parser'
@@ -55,6 +55,22 @@ import { loadDepositories, setDepository, bulkSetDepository, loadDepositoryList,
 import { applySplits, loadSplits, setSplitConfig, deleteSplitConfig, getSplitInvestmentKey, type AssetSplitConfig, type CoinSplit } from '../utils/assetSplits'
 import DataManagementModal from './DataManagementModal'
 import { CoreDashboardTab } from './core/CoreDashboardTab'
+import {
+  fetchMetalPricesEur,
+  fetchSingleMetalPriceEur,
+  loadMetalPricesMeta,
+  saveMetalPricesMeta,
+  type MetalPricesMeta,
+} from '../utils/metalPrices'
+import {
+  getPreciousMetalType,
+  getAssetOunceInfo,
+  formatOunces,
+  computeMetalOunceOverview,
+  TROY_OZ_IN_GRAMS,
+  XTRACKERS_SILVER_OZ_PER_SHARE,
+  GRAM_GOLD_ETFS,
+} from '../utils/metalOunces'
 
 interface DashboardProps {
   investments: Investment[]
@@ -100,7 +116,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
   )
 }
 
-function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice }: { subItems: Investment[], isSilver: boolean, manualPrice: number, onSavePrice: (val: number) => void }) {
+function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice, isLoading, onFetchPrice }: { subItems: Investment[], isSilver: boolean, manualPrice: number, onSavePrice: (val: number) => void, isLoading?: boolean, onFetchPrice?: () => void }) {
   const [localPrice, setLocalPrice] = useState(manualPrice ? manualPrice.toString() : '');
   
   useEffect(() => {
@@ -143,12 +159,25 @@ function CoinSummary({ subItems, isSilver, manualPrice, onSavePrice }: { subItem
           }}
         />
         <button 
+          type="button"
           onClick={() => onSavePrice(parseFloat(localPrice) || 0)}
-          style={{ background: 'var(--primary)', color: 'white', border: 'none', padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          style={{ background: 'var(--gold)', color: '#0d0f14', border: 'none', padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Preis übernehmen"
         >
           <Check size={14} />
         </button>
+        {onFetchPrice && (
+          <button
+            type="button"
+            className="coin-fetch-btn"
+            onClick={onFetchPrice}
+            disabled={isLoading}
+            title={`Aktuellen ${isSilver ? 'Silber' : 'Gold'}-Preis in EUR laden`}
+            aria-label={`Aktuellen ${isSilver ? 'Silber' : 'Gold'}-Preis in EUR laden`}
+          >
+            <RefreshCw size={13} className={isLoading ? 'spin-icon' : ''} />
+          </button>
+        )}
       </div>
       {Object.entries(coinCounts).sort((a, b) => {
         const valA = eval(a[0].replace(' oz', '')) || 0;
@@ -183,21 +212,116 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   const [manualGoldPrice, setManualGoldPrice] = useState<number>(() => {
     const raw = localStorage.getItem('patty-manual-gold')
-    return raw ? parseFloat(raw) : 0
+    const parsed = raw ? parseFloat(raw) : 0
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
   })
   const [manualSilverPrice, setManualSilverPrice] = useState<number>(() => {
     const raw = localStorage.getItem('patty-manual-silver')
-    return raw ? parseFloat(raw) : 0
+    const parsed = raw ? parseFloat(raw) : 0
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
   })
 
   useEffect(() => { localStorage.setItem('patty-manual-gold', manualGoldPrice.toString()) }, [manualGoldPrice])
   useEffect(() => { localStorage.setItem('patty-manual-silver', manualSilverPrice.toString()) }, [manualSilverPrice])
+
+  const [metalPricesMeta, setMetalPricesMeta] = useState<MetalPricesMeta | null>(() => loadMetalPricesMeta())
+  const [metalPricesLoading, setMetalPricesLoading] = useState<'none' | 'both' | 'gold' | 'silver'>('none')
+  const [metalPricesError, setMetalPricesError] = useState<string | null>(null)
+  const metalFetchAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      metalFetchAbortRef.current?.abort()
+    }
+  }, [])
+
+  const runMetalPriceFetch = useCallback(async (
+    mode: 'both' | 'gold' | 'silver',
+    task: (signal: AbortSignal) => Promise<void>
+  ) => {
+    metalFetchAbortRef.current?.abort()
+    const controller = new AbortController()
+    metalFetchAbortRef.current = controller
+    setMetalPricesLoading(mode)
+    setMetalPricesError(null)
+
+    try {
+      await task(controller.signal)
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setMetalPricesError(
+          err instanceof Error ? err.message : 'Edelmetallpreise konnten nicht geladen werden.'
+        )
+      }
+    } finally {
+      if (metalFetchAbortRef.current === controller) {
+        setMetalPricesLoading('none')
+      }
+    }
+  }, [])
+
+  const handleFetchBothMetalPrices = useCallback(() => {
+    void runMetalPriceFetch('both', async (signal) => {
+      const result = await fetchMetalPricesEur({ signal })
+      setManualGoldPrice(result.goldEur)
+      setManualSilverPrice(result.silverEur)
+      const meta: MetalPricesMeta = {
+        fetchedAt: result.fetchedAt,
+        source: result.source,
+        providerUpdatedAt: result.providerUpdatedAt,
+      }
+      setMetalPricesMeta(meta)
+      saveMetalPricesMeta(meta)
+    })
+  }, [runMetalPriceFetch])
+
+  const handleFetchSingleMetalPrice = useCallback((metal: 'gold' | 'silver') => {
+    void runMetalPriceFetch(metal, async (signal) => {
+      const result = await fetchSingleMetalPriceEur(metal, { signal })
+      if (metal === 'gold') {
+        setManualGoldPrice(result.priceEur)
+      } else {
+        setManualSilverPrice(result.priceEur)
+      }
+      const meta: MetalPricesMeta = {
+        fetchedAt: result.fetchedAt,
+        source: result.source,
+        providerUpdatedAt: result.providerUpdatedAt,
+      }
+      setMetalPricesMeta(meta)
+      saveMetalPricesMeta(meta)
+    })
+  }, [runMetalPriceFetch])
+
+  const handleResetMetalPrices = useCallback(() => {
+    setManualGoldPrice(0)
+    setManualSilverPrice(0)
+    setMetalPricesMeta(null)
+    saveMetalPricesMeta(null)
+    setMetalPricesError(null)
+  }, [])
 
   // Split state
   const [splitVersion, setSplitVersion] = useState(0)
   const displayInvestments = useMemo(() => {
     const afterSplits = applySplits(investments);
     return afterSplits.map(inv => {
+      const isinUpper = inv.isin?.toUpperCase() || '';
+      if (inv.category === 'Safe-Haven Gold' && manualGoldPrice > 0 && isinUpper === 'XC0009655157' && inv.quantity > 0) {
+        return {
+          ...inv,
+          currentPrice: manualGoldPrice,
+          currentValue: inv.quantity * manualGoldPrice,
+        };
+      }
+      if (inv.subcategory === 'Silber' && manualSilverPrice > 0 && isinUpper === 'XC0009653103' && inv.quantity > 0) {
+        return {
+          ...inv,
+          currentPrice: manualSilverPrice,
+          currentValue: inv.quantity * manualSilverPrice,
+        };
+      }
+
       let mPrice = 0;
       if (inv.category === 'Safe-Haven Gold') mPrice = manualGoldPrice;
       else if (inv.subcategory === 'Silber') mPrice = manualSilverPrice;
@@ -214,7 +338,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             ounces = parseFloat(sizeStr);
           }
           if (ounces > 0) {
-            return { ...inv, currentValue: ounces * (inv.quantity || 1) * mPrice };
+            return {
+              ...inv,
+              currentPrice: ounces * mPrice,
+              currentValue: ounces * (inv.quantity || 1) * mPrice,
+            };
           }
         }
       }
@@ -382,12 +510,14 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     }
 
     let defaultOunces = targetInv.quantity || 0
-    if (targetInv.isin === 'DE000A2T0VS9' || targetInv.name.toUpperCase().includes('SILBER 80')) {
-      // Xtrackers Physical Silver ETC represents 3 troy ounces per share
-      defaultOunces = (targetInv.quantity || 0) * 3
-    } else if (targetInv.isin === 'DE000A0S9GB0' || targetInv.name.toUpperCase().includes('XETRA-GOLD')) {
-      // Xetra-Gold represents 1 gram of gold per share, which is 1 / 31.1035 troy ounces
-      defaultOunces = (targetInv.quantity || 0) / 31.1035
+    const targetIsinUpper = targetInv.isin?.toUpperCase() || ''
+    const targetNameUpper = targetInv.name.toUpperCase()
+    if (targetIsinUpper === 'DE000A2T0VS9' || targetNameUpper.includes('SILBER 80')) {
+      // Xtrackers Physical Silver ETC represents ~1.43 troy ounces per share
+      defaultOunces = (targetInv.quantity || 0) * XTRACKERS_SILVER_OZ_PER_SHARE
+    } else if (GRAM_GOLD_ETFS.includes(targetIsinUpper) || targetNameUpper.includes('XETRA-GOLD') || targetNameUpper.includes('EUWAX GOLD')) {
+      // 1-gram gold ETFs represent 1 / 31.1035 troy ounces per share
+      defaultOunces = (targetInv.quantity || 0) / TROY_OZ_IN_GRAMS
     }
 
     const initialConfig = existing || {
@@ -760,13 +890,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
 
   // Extract gold price per gram from ETF and calculate 1 oz Philharmoniker price
   // ETF currentPrice = price per gram; 1 troy oz = 31.1035g; ~3% dealer premium for physical coin
-  const TROY_OZ_IN_GRAMS = 31.1035
   const DEALER_PREMIUM = 1.03
-  
+
   let goldGramPrice = 0
-  const knownGramEtfs = ['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7']
-  const exactGramEtf = displayInvestments.find(inv => knownGramEtfs.includes(inv.isin.toUpperCase()) && inv.currentPrice > 0)
-  
+  const exactGramEtf = displayInvestments.find(inv => GRAM_GOLD_ETFS.includes(inv.isin.toUpperCase()) && inv.currentPrice > 0)
+
   if (exactGramEtf) {
     goldGramPrice = exactGramEtf.currentPrice
   } else {
@@ -780,25 +908,34 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
     }
   }
 
-  const goldOzPrice = goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
+  const goldOzPrice = manualGoldPrice > 0 ? manualGoldPrice : goldGramPrice * TROY_OZ_IN_GRAMS * DEALER_PREMIUM
 
   let silverSharePrice = 30
   const knownSilverEtcs = ['JE00B1VS3333', 'IE00B4NCWG09', 'IE00B43VDT70', 'XC0009653103']
   const exactSilverEtc = displayInvestments.find(inv => knownSilverEtcs.includes(inv.isin?.toUpperCase() || '') && inv.currentPrice > 0)
-  
+
   if (exactSilverEtc) {
      silverSharePrice = exactSilverEtc.currentPrice
   } else {
      const xtrackersSilver = displayInvestments.find(inv => inv.isin === 'DE000A2T0VS9' || inv.name.toUpperCase().includes('SILBER 80'))
      if (xtrackersSilver && xtrackersSilver.currentPrice > 0) {
-        silverSharePrice = xtrackersSilver.currentPrice / 3
+        silverSharePrice = xtrackersSilver.currentPrice / XTRACKERS_SILVER_OZ_PER_SHARE
      } else {
         // Find generic silver ETC priced realistically between 15 and 50 EUR
         const genericSilver = displayInvestments.find(inv => (inv.name.toLowerCase().includes('silber') || inv.name.toLowerCase().includes('silver')) && inv.currentPrice > 15 && inv.currentPrice < 50 && (!inv.isin || inv.isin.length >= 6))
         if (genericSilver) silverSharePrice = genericSilver.currentPrice
      }
   }
-  const SILVER_OZ_PRICE_EUR = silverSharePrice
+  const SILVER_OZ_PRICE_EUR = manualSilverPrice > 0 ? manualSilverPrice : silverSharePrice
+
+  const metalOunceOverview = useMemo(
+    () =>
+      computeMetalOunceOverview(activeInvestments, depositories, {
+        goldOzPrice,
+        silverOzPrice: SILVER_OZ_PRICE_EUR,
+      }),
+    [activeInvestments, depositories, goldOzPrice, SILVER_OZ_PRICE_EUR]
+  )
 
   const actualChartData = allocation.map((a) => ({
     name: a.category,
@@ -921,6 +1058,112 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             <div className="stat-sub">Target {fmtPct(a.targetPercentage)}</div>
           </div>
         ))}
+      </div>
+
+      {/* Live Metal Prices Bar */}
+      <div className="metal-prices-bar">
+        <div className="metal-prices-row">
+          <div className="metal-prices-info">
+            <span className="metal-prices-title">
+              <Coins size={15} color="var(--gold)" />
+              Edelmetallpreise (1 oz)
+            </span>
+            <div className="metal-price-pill">
+              <span className="metal-price-dot" style={{ background: 'var(--cat-gold-safe)' }} />
+              <span className="metal-price-label">Gold</span>
+              <span className="metal-price-value">{manualGoldPrice > 0 ? fmtEur(manualGoldPrice) : '—'}</span>
+            </div>
+            <div className="metal-price-pill">
+              <span className="metal-price-dot" style={{ background: '#cbd5e1' }} />
+              <span className="metal-price-label">Silber</span>
+              <span className="metal-price-value">{manualSilverPrice > 0 ? fmtEur(manualSilverPrice) : '—'}</span>
+            </div>
+            {metalPricesMeta && (manualGoldPrice > 0 || manualSilverPrice > 0) && (
+              <span className="metal-prices-meta">
+                Stand: {new Date(metalPricesMeta.fetchedAt).toLocaleString('de-DE', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })} · {metalPricesMeta.source}
+              </span>
+            )}
+          </div>
+          <div className="metal-prices-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-gold metal-fetch-btn"
+              onClick={handleFetchBothMetalPrices}
+              disabled={metalPricesLoading !== 'none'}
+            >
+              <RefreshCw size={13} className={metalPricesLoading === 'both' ? 'spin-icon' : ''} />
+              {metalPricesLoading === 'both' ? 'Lade Preise…' : 'Gold & Silber laden'}
+            </button>
+            {(manualGoldPrice > 0 || manualSilverPrice > 0) && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={handleResetMetalPrices}
+                title="Edelmetallpreise zurücksetzen (CSV-Werte verwenden)"
+                aria-label="Edelmetallpreise zurücksetzen"
+              >
+                <RotateCcw size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+        {metalOunceOverview.byDepository.length > 0 && (
+          <div className="metal-depo-summary">
+            <div className="metal-depo-header">
+              <span className="metal-depo-title">Unzen pro Lagerstätte</span>
+              <div className="metal-depo-totals">
+                <span>Gesamt:</span>
+                {metalOunceOverview.totalGoldOz > 0 && (
+                  <span className="metal-depo-total-item">
+                    <span className="metal-price-dot" style={{ background: 'var(--cat-gold-safe)' }} />
+                    {metalOunceOverview.goldEstimated ? '~' : ''}{formatOunces(metalOunceOverview.totalGoldOz)} oz Gold
+                  </span>
+                )}
+                {metalOunceOverview.totalSilverOz > 0 && (
+                  <span className="metal-depo-total-item">
+                    <span className="metal-price-dot" style={{ background: '#cbd5e1' }} />
+                    {metalOunceOverview.silverEstimated ? '~' : ''}{formatOunces(metalOunceOverview.totalSilverOz)} oz Silber
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="metal-depo-grid">
+              {metalOunceOverview.byDepository.map((entry) => (
+                <div
+                  className="metal-depo-card"
+                  key={entry.depository}
+                  title={`${entry.depository}: ${fmtEur(entry.totalValue)} (${entry.assetCount} ${entry.assetCount === 1 ? 'Position' : 'Positionen'})`}
+                >
+                  <span className="metal-depo-name">{entry.depository}</span>
+                  <div className="metal-depo-values">
+                    {entry.goldOz > 0 && (
+                      <span className="metal-depo-val">
+                        <span className="metal-price-dot" style={{ background: 'var(--cat-gold-safe)' }} />
+                        {entry.goldEstimated ? '~' : ''}{formatOunces(entry.goldOz)} oz Gold
+                      </span>
+                    )}
+                    {entry.silverOz > 0 && (
+                      <span className="metal-depo-val">
+                        <span className="metal-price-dot" style={{ background: '#cbd5e1' }} />
+                        {entry.silverEstimated ? '~' : ''}{formatOunces(entry.silverOz)} oz Silber
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {metalPricesError && (
+          <div className="metal-prices-error" role="alert">
+            {metalPricesError}
+          </div>
+        )}
       </div>
 
       {/* Tab Switcher */}
@@ -2299,6 +2542,18 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                     const subPct = catValue > 0 ? subValue / catValue : 0
                     const subCollapseKey = `${cat}::${sub}`
                     const subOpen = !collapsed[subCollapseKey]
+                    const showOuncesCol = (cat === 'Safe-Haven Gold' || sub === 'Silber') && subItems.some((inv) => getPreciousMetalType(inv) !== null)
+                    const subOunceInfos = showOuncesCol
+                      ? subItems.map((inv) => getAssetOunceInfo(inv, { goldOzPrice, silverOzPrice: SILVER_OZ_PRICE_EUR }))
+                      : []
+                    let subTotalOz = 0
+                    let subOzEstimated = false
+                    for (const info of subOunceInfos) {
+                      if (info && info.ounces > 0) {
+                        subTotalOz += info.ounces
+                        if (info.estimated) subOzEstimated = true
+                      }
+                    }
 
                     return (
                       <div className="subcategory-group" key={sub}>
@@ -2326,6 +2581,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                           <span className="sub-dot" style={{ background: getSubcategoryColor(sub, cat) }} />
                           <span className="subcategory-header-name">{sub}</span>
                           <span className="subcategory-header-count">{subItems.length}</span>
+                          {showOuncesCol && subTotalOz > 0 && (
+                            <span className="sub-oz-badge">
+                              {subOzEstimated ? '~' : ''}{formatOunces(subTotalOz)} oz
+                            </span>
+                          )}
                           {subCost > 0 && (
                             <span className={`subcategory-header-gain ${subGain >= 0 ? 'positive' : 'negative'}`} style={{ color: subGain >= 0 ? 'var(--green)' : 'var(--red)', fontSize: '0.78rem', minWidth: '70px', textAlign: 'right', fontWeight: 600 }}>
                               {subGain >= 0 ? '+' : ''}{(subGainPct * 100).toFixed(1)}%
@@ -2345,7 +2605,9 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                 subItems={subItems} 
                                 isSilver={sub === 'Silber'} 
                                 manualPrice={sub === 'Silber' ? manualSilverPrice : manualGoldPrice} 
-                                onSavePrice={val => sub === 'Silber' ? setManualSilverPrice(val) : setManualGoldPrice(val)} 
+                                onSavePrice={val => sub === 'Silber' ? setManualSilverPrice(val) : setManualGoldPrice(val)}
+                                isLoading={metalPricesLoading === 'both' || metalPricesLoading === (sub === 'Silber' ? 'silver' : 'gold')}
+                                onFetchPrice={() => handleFetchSingleMetalPrice(sub === 'Silber' ? 'silver' : 'gold')}
                               />
                             )}
                             <table className="holdings-table sub-table">
@@ -2370,6 +2632,7 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                   <th>Name</th>
                                   <th>Type</th>
                                   <th style={{ textAlign: 'right' }}>Value €</th>
+                                  {showOuncesCol && <th style={{ textAlign: 'right' }}>Unzen</th>}
                                   <th style={{ textAlign: 'right' }}>G/L</th>
                                   <th>Lagerstätte</th>
                                   <th>Broker</th>
@@ -2382,11 +2645,12 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                 </tr>
                               </thead>
                               <tbody>
-                                {subItems.map((inv) => {
+                                {subItems.map((inv, idx) => {
                                   const cost = inv.purchasePrice * inv.quantity
                                   const gain = inv.currentValue - cost
                                   const gainPct = cost > 0 ? gain / cost : 0
                                   const key = investmentKey(inv)
+                                  const ozInfo = showOuncesCol ? subOunceInfos[idx] : null
                                   const isCatExcluded = excludedCategories.has(inv.category)
                                   const isAssetExcludedExplicitly = excludedAssetKeys.has(key)
                                   const isExcluded = isCatExcluded || isAssetExcludedExplicitly
@@ -2499,6 +2763,11 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
                                       </td>
                                       <td>{inv.type}</td>
                                       <td className="num">{fmt(inv.currentValue)}</td>
+                                      {showOuncesCol && (
+                                        <td className="num metal-oz-cell" title={ozInfo?.detail}>
+                                          {ozInfo ? `${ozInfo.estimated ? '~' : ''}${formatOunces(ozInfo.ounces)} oz` : '—'}
+                                        </td>
+                                      )}
                                       <td className={`num ${gain >= 0 ? 'positive' : 'negative'}`}>
                                         {gain >= 0 ? '+' : ''}{(gainPct * 100).toFixed(1)} %
                                       </td>
@@ -2702,25 +2971,39 @@ export default function Dashboard({ investments, onCategoryChange, onCustomNameC
             
             <div style={{ display: 'flex', gap: '12px', marginBottom: 20, alignItems: 'center', background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', flexWrap: 'wrap' }}>
                <label style={{ fontSize: '0.88rem', fontWeight: 600 }}>Gesamtmenge in Unzen:</label>
-               <input 
-                  type="number" 
-                  step="0.01" 
-                  value={
-                    (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD')) ? ((splitModalAsset.quantity || 0) / 31.1035).toFixed(3) :
-                    (splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80')) ? ((splitModalAsset.quantity || 0) * 3).toFixed(3) :
-                    (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')) ? (splitModalAsset.quantity || 0).toFixed(3) :
-                    splitConfig.totalOunces
-                  } 
-                  disabled={Boolean(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103')))}
-                  onChange={e => {
-                    const val = parseFloat(e.target.value) || 0
-                    setSplitConfigState(prev => prev ? ({ ...prev, totalOunces: val }) : prev)
-                  }}
-                  style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: (['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) ? 0.6 : 1 }}
-               />
-               {(['DE000A0S9GB0', 'DE000EWG0LD1', 'DE000EWG2LD7'].includes(splitModalAsset.isin?.toUpperCase() || '') || splitModalAsset.name.toUpperCase().includes('XETRA-GOLD') || splitModalAsset.isin === 'DE000A2T0VS9' || splitModalAsset.name.toUpperCase().includes('SILBER 80') || (splitModalAsset.isin && splitModalAsset.isin.toUpperCase() !== 'N/A' && (splitModalAsset.name.toUpperCase().includes('SILBER') || splitModalAsset.name.toUpperCase().includes('SILVER') || splitModalAsset.isin === 'XC0009653103'))) && (
-                 <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
-               )}
+               {(() => {
+                 const modalIsinUpper = splitModalAsset.isin?.toUpperCase() || ''
+                 const modalNameUpper = splitModalAsset.name.toUpperCase()
+                 const isGramGold = GRAM_GOLD_ETFS.includes(modalIsinUpper) || modalNameUpper.includes('XETRA-GOLD') || modalNameUpper.includes('EUWAX GOLD')
+                 const isXtrackersSilver = modalIsinUpper === 'DE000A2T0VS9' || modalNameUpper.includes('SILBER 80')
+                 const isOneOzSilver = Boolean(splitModalAsset.isin && modalIsinUpper !== 'N/A' && (modalNameUpper.includes('SILBER') || modalNameUpper.includes('SILVER') || modalIsinUpper === 'XC0009653103'))
+                 const isAutoOunces = isGramGold || isXtrackersSilver || isOneOzSilver
+                 const displayTotalOunces = isGramGold
+                   ? ((splitModalAsset.quantity || 0) / TROY_OZ_IN_GRAMS).toFixed(3)
+                   : isXtrackersSilver
+                     ? ((splitModalAsset.quantity || 0) * XTRACKERS_SILVER_OZ_PER_SHARE).toFixed(3)
+                     : isOneOzSilver
+                       ? (splitModalAsset.quantity || 0).toFixed(3)
+                       : splitConfig.totalOunces
+                 return (
+                   <>
+                     <input
+                       type="number"
+                       step="0.01"
+                       value={displayTotalOunces}
+                       disabled={isAutoOunces}
+                       onChange={e => {
+                         const val = parseFloat(e.target.value) || 0
+                         setSplitConfigState(prev => prev ? ({ ...prev, totalOunces: val }) : prev)
+                       }}
+                       style={{ width: '90px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', textAlign: 'right', opacity: isAutoOunces ? 0.6 : 1 }}
+                     />
+                     {isAutoOunces && (
+                       <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>(automatisch aus Bestand berechnet)</span>
+                     )}
+                   </>
+                 )
+               })()}
                <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
                  Gesamtwert: <strong style={{ color: 'var(--green)' }}>€ {(splitModalAsset.currentValue || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
                </span>
